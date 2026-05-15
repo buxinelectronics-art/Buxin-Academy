@@ -18,10 +18,20 @@ def upload_image(file_data, folder="buxinev"):
             "url": "https://via.placeholder.com/400x300?text=Receipt+Uploaded",
             "public_id": "placeholder",
         }
-    result = cloudinary.uploader.upload(
-        file_data,
-        folder=folder,
-        resource_type="image",
-        transformation=[{"quality": "auto", "fetch_format": "auto"}],
-    )
+    if hasattr(file_data, "read"):
+        file_data = file_data.read()
+    if isinstance(file_data, str) and file_data.startswith("data:"):
+        result = cloudinary.uploader.upload(
+            file_data,
+            folder=folder,
+            resource_type="image",
+            transformation=[{"quality": "auto", "fetch_format": "auto"}],
+        )
+    else:
+        result = cloudinary.uploader.upload(
+            file_data,
+            folder=folder,
+            resource_type="image",
+            transformation=[{"quality": "auto", "fetch_format": "auto"}],
+        )
     return {"url": result["secure_url"], "public_id": result["public_id"]}

@@ -14,12 +14,15 @@ admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 def list_students():
     status = request.args.get("status")
     country = request.args.get("country")
+    class_type = request.args.get("class_type")
     search = request.args.get("search", "").strip()
     query = User.query.filter_by(role="student")
     if status:
         query = query.filter(User.status == status)
     if country:
         query = query.filter(User.country_code == country.upper())
+    if class_type:
+        query = query.filter(User.class_type == class_type)
     if search:
         query = query.filter(
             db.or_(

@@ -14,13 +14,13 @@ from services.currency_service import get_class_prices
 payment_bp = Blueprint("payments", __name__, url_prefix="/api/payments")
 
 
-@payment_bp.route("", methods=["POST"])
-@token_required
-def create_payment():
-    user = g.current_user
-    data = request.get_json() or {}
-    class_type = data.get("class_type") or user.class_type or "group"
-    method = data.get("payment_method", "")
+def _get_or_create_pending_payment(user, class_type, method):
+    """One open pending payment per student — avoids duplicate rows on double-click."""
+    Payment.query.filter(
+        Payment.user_id == user.id,
+        Payment.status == "pending",
+        Payment.receipt_url.is_(None),
+    ).delete(synchronize_session=False)
 
     prices = get_class_prices(user.country_code)
     price = prices["group"] if class_type == "group" else prices["individual"]
@@ -35,6 +35,53 @@ def create_payment():
         status="pending",
     )
     db.session.add(payment)
+    db.session.flush()
+    return payment
+
+
+@payment_bp.route("/submit", methods=["POST"])
+@token_required
+def submit_payment():
+    """Register payment + receipt in one request (multipart)."""
+    user = g.current_user
+    class_type = request.form.get("class_type") or user.class_type or "group"
+    method = request.form.get("payment_method", "")
+    file = request.files.get("receipt")
+
+    if not file or not file.filename:
+        return jsonify({"error": "Payment receipt image is required"}), 400
+    if not method:
+        return jsonify({"error": "Select a payment method"}), 400
+
+    if user.class_type != class_type:
+        user.class_type = class_type
+
+    try:
+        payment = _get_or_create_pending_payment(user, class_type, method)
+        result = upload_image(file, folder="buxinev/receipts")
+        payment.receipt_url = result["url"]
+        db.session.add(
+            Notification(
+                user_id=user.id,
+                title="Receipt Uploaded",
+                message="Your payment is under review. We'll notify you when approved.",
+            )
+        )
+        db.session.commit()
+        return jsonify({"payment": payment.to_dict(), "user": user.to_dict()}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
+
+
+@payment_bp.route("", methods=["POST"])
+@token_required
+def create_payment():
+    user = g.current_user
+    data = request.get_json() or {}
+    class_type = data.get("class_type") or user.class_type or "group"
+    method = data.get("payment_method", "")
+    payment = _get_or_create_pending_payment(user, class_type, method)
     db.session.commit()
     return jsonify({"payment": payment.to_dict()}), 201
 
@@ -52,7 +99,7 @@ def upload_receipt():
         return jsonify({"error": "No pending payment found"}), 404
 
     file = request.files.get("receipt")
-    if file:
+    if file and file.filename:
         try:
             result = upload_image(file, folder="buxinev/receipts")
             payment.receipt_url = result["url"]
@@ -63,11 +110,12 @@ def upload_receipt():
     else:
         return jsonify({"error": "Receipt file required"}), 400
 
-    db.session.commit()
-    Notification(
-        user_id=user.id,
-        title="Receipt Uploaded",
-        message="Your payment receipt is under review. We'll notify you once approved.",
+    db.session.add(
+        Notification(
+            user_id=user.id,
+            title="Receipt Uploaded",
+            message="Your payment receipt is under review.",
+        )
     )
     db.session.commit()
     return jsonify({"payment": payment.to_dict()})
@@ -89,11 +137,14 @@ def my_payments():
 def admin_payments():
     status = request.args.get("status")
     country = request.args.get("country")
+    class_type = request.args.get("class_type")
     query = Payment.query.join(User)
     if status:
         query = query.filter(Payment.status == status)
     if country:
         query = query.filter(User.country_code == country.upper())
+    if class_type:
+        query = query.filter(Payment.class_type == class_type)
     payments = query.order_by(Payment.created_at.desc()).all()
     result = []
     for p in payments:
@@ -101,6 +152,8 @@ def admin_payments():
         item["student_name"] = p.user.full_name
         item["email"] = p.user.email
         item["country_code"] = p.user.country_code
+        item["profile_picture"] = p.user.profile_picture
+        item["student_class_type"] = p.user.class_type
         result.append(item)
     return jsonify({"payments": result})
 
@@ -115,6 +168,11 @@ def approve_payment(payment_id):
     payment.reviewed_at = datetime.utcnow()
     user = payment.user
     user.status = "active"
+    Payment.query.filter(
+        Payment.user_id == user.id,
+        Payment.id != payment.id,
+        Payment.status == "pending",
+    ).update({"status": "rejected"})
     db.session.add(
         AdminAction(
             admin_id=g.current_user.id,
@@ -168,4 +226,3 @@ def reject_payment(payment_id):
     )
     db.session.commit()
     return jsonify({"payment": payment.to_dict()})
-
