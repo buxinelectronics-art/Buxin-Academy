@@ -39,10 +39,15 @@ class Config:
         if m:
             CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET, CLOUDINARY_CLOUD_NAME = m.groups()
 
-    CORS_ORIGINS = os.getenv(
-        "CORS_ORIGINS",
-        "http://localhost:5500,http://127.0.0.1:5500,http://localhost:3000",
-    ).split(",")
+    CORS_ORIGINS = [
+        o.strip()
+        for o in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:5500,http://127.0.0.1:5500,"
+            "https://buxinelectronics-art.github.io",
+        ).split(",")
+        if o.strip()
+    ]
 
     MAX_CONTENT_LENGTH = 5 * 1024 * 1024  # 5MB uploads
 
