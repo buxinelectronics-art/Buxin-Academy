@@ -72,8 +72,11 @@ def create_app():
             join_room(f"user_{user_id}")
 
     with app.app_context():
-        db.create_all()
-        _seed_defaults()
+        try:
+            db.create_all()
+            _seed_defaults()
+        except Exception as exc:
+            app.logger.error("Database init on startup: %s", exc)
 
     return app
 
