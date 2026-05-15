@@ -3,7 +3,7 @@ services:
     name: buxin-academy-api
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT app:app
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --timeout 120 --workers 1 app:app
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION

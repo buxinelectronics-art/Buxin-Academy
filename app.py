@@ -21,6 +21,11 @@ from routes.payment_routes import payment_bp
 from routes.schedule_routes import schedule_bp
 from services.cloudinary_service import init_cloudinary
 
+def _socketio_async_mode():
+    """threading works with Render's default `gunicorn app:app`; eventlet needs a custom start command."""
+    return os.getenv("SOCKETIO_ASYNC_MODE", "threading")
+
+
 socketio = SocketIO(cors_allowed_origins="*")
 
 
@@ -39,7 +44,7 @@ def create_app():
         storage_uri="memory://",
     )
 
-    socketio.init_app(app, async_mode="eventlet", cors_allowed_origins="*")
+    socketio.init_app(app, async_mode=_socketio_async_mode(), cors_allowed_origins="*")
     app.extensions["socketio"] = socketio
 
     app.register_blueprint(auth_bp)
