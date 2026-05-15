@@ -45,7 +45,7 @@ class Config:
             "CORS_ORIGINS",
             "http://localhost:5500,http://127.0.0.1:5500,"
             "https://buxinelectronics-art.github.io,"
-            "https://academy.techbuxin.com",
+            "http://academy.techbuxin.com,https://academy.techbuxin.com",
         ).split(",")
         if o.strip()
     ]
