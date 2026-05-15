@@ -15,6 +15,18 @@
 **If deploy shows `Running 'gunicorn app:app'`** — that is wrong. Update Start Command in Render **Settings** to the line above, then **Manual Deploy**.
 | **Instance** | Free (for testing) |
 
+### Required: Python version
+
+Render may default to Python 3.14, which breaks the database driver.
+
+In **Environment** add:
+
+| Key | Value |
+|-----|--------|
+| `PYTHON_VERSION` | `3.10.12` |
+
+Then **Manual Deploy** again. (`runtime.txt` and `.python-version` are also in the repo.)
+
 ## Environment variables
 
 | Key | Value |
