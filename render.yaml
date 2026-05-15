@@ -2,7 +2,6 @@ services:
   - type: web
     name: buxin-academy-api
     runtime: python
-    rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT app:app
     healthCheckPath: /api/health
