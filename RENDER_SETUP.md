@@ -1,5 +1,18 @@
 # Render setup for Buxin-Academy
 
+## Auto-deploy from GitHub (push → live)
+
+If you have to **Manual Deploy** every time you push, fix the link between GitHub and Render:
+
+1. In **Render** → your Web Service → **Settings** → **Build & Deploy**:
+   - **Branch**: `main` (or the branch you use).
+   - **Auto-Deploy**: **On Commit** (enable deploys when you push).
+2. In **GitHub** → repo **Settings** → **Webhooks**:
+   - There should be a Render webhook; recent deliveries should be **green**.
+   - If it’s missing or failing, disconnect and reconnect the repo in Render, or reinstall the Render GitHub app for that repo.
+
+Auto-deploy cannot be turned on from this codebase; it’s only in the Render + GitHub UI.
+
 ## Service settings
 
 | Field | Value |
@@ -13,7 +26,7 @@
 | **Start Command** | `gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT --timeout 120 app:app` |
 
 **If deploy shows `Running 'gunicorn app:app'`** — that is wrong. Update Start Command in Render **Settings** to the line above, then **Manual Deploy**.
-| **Instance** | Free (for testing) |
+| **Instance** | Free (for testing) — spins down after ~15 min idle; first request after idle can take **30–90s**. Paid instances stay up. The frontend retries API calls to handle cold starts. |
 
 ### Required: Python version
 
