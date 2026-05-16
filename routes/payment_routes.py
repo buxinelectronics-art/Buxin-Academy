@@ -55,7 +55,7 @@ def _activate_student_payment(payment, *, admin_id=None, details=""):
         Notification(
             user_id=user.id,
             title="Payment Approved!",
-            message="Payment approved! Your classes and community are unlocked for one month.",
+            message="Payment approved! Your 30-day subscription starts now (Day 1). Classes and community are unlocked.",
         )
     )
     db.session.commit()

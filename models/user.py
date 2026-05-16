@@ -21,6 +21,7 @@ class User(db.Model):
     learning_goals = db.Column(db.Text)
     profile_picture = db.Column(db.String(500))
     status = db.Column(db.String(20), default="pending")  # pending | active | expired | rejected
+    subscription_started_at = db.Column(db.DateTime)
     subscription_expires_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -36,7 +37,7 @@ class User(db.Model):
         return check_password_hash(self.password_hash, password)
 
     def to_dict(self, include_sensitive=False):
-        from services.subscription_service import is_subscription_active
+        from services.subscription_service import is_subscription_active, subscription_day_info
 
         data = {
             "id": self.id,
@@ -51,10 +52,14 @@ class User(db.Model):
             "learning_goals": self.learning_goals,
             "profile_picture": self.profile_picture,
             "status": self.status,
+            "subscription_started_at": (
+                self.subscription_started_at.isoformat() if self.subscription_started_at else None
+            ),
             "subscription_expires_at": (
                 self.subscription_expires_at.isoformat() if self.subscription_expires_at else None
             ),
             "subscription_active": is_subscription_active(self),
+            **subscription_day_info(self),
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
         return data

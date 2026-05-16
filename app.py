@@ -138,12 +138,13 @@ def _ensure_user_subscription_column():
     if not db.engine.url.drivername.startswith("postgres"):
         return
     try:
-        db.session.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "subscription_expires_at TIMESTAMP"
+        for col in (
+            "subscription_started_at TIMESTAMP",
+            "subscription_expires_at TIMESTAMP",
+        ):
+            db.session.execute(
+                text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col}")
             )
-        )
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
