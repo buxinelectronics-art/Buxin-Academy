@@ -12,6 +12,7 @@ from services.cloudinary_service import PLACEHOLDER_RECEIPT, upload_image
 from services.currency_service import get_class_prices
 from services.modempay_service import (
     ModemPayError,
+    create_checkout_payment_link,
     is_configured,
     parse_webhook_event,
     retrieve_transaction,
@@ -318,15 +319,47 @@ def modempay_session():
 
     payment = _get_or_create_pending_payment(user, class_type, method)
     payment.payment_channel = "modempay"
+    db.session.flush()
+
+    frontend = current_app.config["FRONTEND_URL"]
+    reference = f"academy-{payment.id}"
+    return_url = (
+        f"{frontend}/payment-success.html"
+        f"?payment_id={payment.id}&reference={reference}&class_type={class_type}"
+    )
+    cancel_url = f"{frontend}/payment.html?type={class_type}"
+
+    try:
+        checkout = create_checkout_payment_link(
+            amount_gmd,
+            reference=reference,
+            customer_name=user.full_name,
+            customer_email=user.email,
+            customer_phone=user.phone,
+            return_url=return_url,
+            cancel_url=cancel_url,
+            metadata={
+                "payment_id": payment.id,
+                "user_id": user.id,
+                "class_type": class_type,
+                "payment_method": method,
+                "source": "buxin-academy",
+            },
+        )
+    except ModemPayError as exc:
+        db.session.rollback()
+        return jsonify({"error": str(exc)}), 502
+
+    payment.modem_intent_id = checkout.get("intent_id")
     db.session.commit()
 
-    # Inline ModemPayCheckout uses the public key in the browser — no server intent required.
     return jsonify(
         {
             "payment_id": payment.id,
             "amount": amount_gmd,
             "currency": price["currency"],
             "public_key": current_app.config["MODEMPAY_PUBLIC_KEY"],
+            "payment_url": checkout["payment_url"],
             "class_type": class_type,
             "payment_method": method,
         }
