@@ -26,12 +26,27 @@ def get_posts():
 @active_student_required
 def create_post():
     data = request.get_json() or {}
-    if not data.get("content"):
-        return jsonify({"error": "Content required"}), 400
+    content = (data.get("content") or "").strip()
+    image_url = data.get("image_url")
+
+    if data.get("image_base64"):
+        try:
+            from services.cloudinary_service import upload_image
+
+            result = upload_image(data["image_base64"], folder="buxinev/community")
+            image_url = result["url"]
+        except Exception as exc:
+            from flask import current_app
+
+            current_app.logger.warning("Community image upload failed: %s", exc)
+
+    if not content and not image_url:
+        return jsonify({"error": "Write a message or add an image"}), 400
+
     post = CommunityPost(
         user_id=g.current_user.id,
-        content=data["content"],
-        image_url=data.get("image_url"),
+        content=content or "📷",
+        image_url=image_url,
     )
     db.session.add(post)
     db.session.commit()

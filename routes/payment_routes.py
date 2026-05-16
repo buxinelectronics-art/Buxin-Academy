@@ -61,7 +61,12 @@ def _activate_student_payment(payment, *, admin_id=None, details=""):
 
     current_app.extensions["socketio"].emit(
         "notification",
-        {"title": "Payment Approved!", "message": "Your account is now active."},
+        {
+            "title": "Payment Approved!",
+            "message": "Your account is now active.",
+            "status": "active",
+            "user_status": "active",
+        },
         room=f"user_{user.id}",
     )
     return user
