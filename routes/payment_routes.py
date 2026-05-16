@@ -20,7 +20,12 @@ from services.modempay_service import (
 
 payment_bp = Blueprint("payments", __name__, url_prefix="/api/payments")
 
-MODEMPAY_INSTANT_METHODS = frozenset({"Wave", "AfriMoney"})
+MODEMPAY_INSTANT_METHODS = frozenset({
+    "Wave",
+    "AfriMoney",
+    "APS Wallet",
+    "Mobile Wallet",
+})
 MODEMPAY_COUNTRIES = frozenset({"GM"})
 
 

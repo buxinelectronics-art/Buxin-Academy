@@ -8,12 +8,9 @@ COUNTRIES = {
         "symbol": "D",
         "rate": 72.5,
         "payment_methods": [
-            "Wave",
-            "AfriMoney",
+            "Mobile Wallet",
             "Bank Transfer",
-            "Western Union",
-            "MoneyGram",
-            "Ria",
+            "Western Union / MoneyGram / Ria",
         ],
     },
     "NG": {
