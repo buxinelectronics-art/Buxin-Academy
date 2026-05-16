@@ -9,6 +9,7 @@ COUNTRIES = {
         "rate": 72.5,
         "payment_methods": [
             "Wave",
+            "AfriMoney",
             "Bank Transfer",
             "Western Union",
             "MoneyGram",

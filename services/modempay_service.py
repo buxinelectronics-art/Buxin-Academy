@@ -77,7 +77,10 @@ def create_payment_intent(
     body = resp.json() if resp.content else {}
     if not resp.ok:
         logger.error("Modem Pay intent failed: %s %s", resp.status_code, body)
-        raise ModemPayError(body.get("message") or "Could not start Modem Pay checkout")
+        msg = body.get("message") or body.get("error")
+        if isinstance(msg, dict):
+            msg = msg.get("message") or str(msg)
+        raise ModemPayError(msg or f"Modem Pay error ({resp.status_code})")
     return body.get("data") or body
 
 

@@ -66,7 +66,9 @@ def _amount_matches(payment: Payment, paid_amount) -> bool:
     try:
         paid = float(paid_amount)
         expected = float(payment.amount_local)
-        return abs(paid - expected) <= max(1.0, expected * 0.02)
+        if paid >= expected * 50:
+            paid = paid / 100
+        return abs(paid - expected) <= max(2.0, expected * 0.03)
     except (TypeError, ValueError):
         return False
 
