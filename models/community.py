@@ -19,13 +19,14 @@ class CommunityPost(db.Model):
     comments = db.relationship("Comment", backref="post", lazy=True, cascade="all, delete-orphan")
     likes = db.relationship("PostLike", backref="post", lazy=True, cascade="all, delete-orphan")
 
-    def to_dict(self, current_user_id=None):
+    def to_dict(self, current_user_id=None, include_comments=False):
         like_count = len(self.likes)
         liked = any(l.user_id == current_user_id for l in self.likes) if current_user_id else False
-        return {
+        data = {
             "id": self.id,
             "user_id": self.user_id,
             "author_name": self.author.full_name if self.author else "Unknown",
+            "author_role": self.author.role if self.author else "student",
             "author_picture": self.author.profile_picture if self.author else None,
             "content": self.content,
             "image_url": self.image_url,
@@ -38,6 +39,10 @@ class CommunityPost(db.Model):
             "comment_count": len(self.comments),
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+        if include_comments:
+            ordered = sorted(self.comments, key=lambda c: c.created_at or datetime.min)
+            data["comments"] = [c.to_dict() for c in ordered]
+        return data
 
 
 class Comment(db.Model):

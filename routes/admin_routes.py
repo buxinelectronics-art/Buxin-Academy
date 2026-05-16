@@ -164,6 +164,17 @@ def create_class():
     return jsonify({"class": session.to_dict()}), 201
 
 
+@admin_bp.route("/classes/<int:class_id>", methods=["DELETE"])
+@admin_required
+def delete_class(class_id):
+    session = db.session.get(ClassSession, class_id)
+    if not session:
+        return jsonify({"error": "Class not found"}), 404
+    db.session.delete(session)
+    db.session.commit()
+    return jsonify({"message": "Class removed"})
+
+
 @admin_bp.route("/announcements", methods=["POST"])
 @admin_required
 def send_announcement():

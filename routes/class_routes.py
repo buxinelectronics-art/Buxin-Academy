@@ -19,5 +19,12 @@ def list_classes():
                 ClassSession.class_type.is_(None),
             )
         )
-    sessions = query.order_by(ClassSession.scheduled_at.desc()).limit(10).all()
+    sessions = (
+        query.order_by(
+            ClassSession.is_live.desc(),
+            ClassSession.scheduled_at.desc(),
+        )
+        .limit(20)
+        .all()
+    )
     return jsonify({"classes": [c.to_dict() for c in sessions]})
