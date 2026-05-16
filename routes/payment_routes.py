@@ -14,11 +14,18 @@ from services.currency_service import get_class_prices
 payment_bp = Blueprint("payments", __name__, url_prefix="/api/payments")
 
 
+def _valid_receipt_b64(value) -> bool:
+    if not value or not isinstance(value, str):
+        return False
+    s = value.strip()
+    return len(s) > 80 and (s.startswith("data:image/") or s.startswith("data:application/"))
+
+
 def _save_receipt(payment, file=None, receipt_base64=None):
     """Upload receipt; on Cloudinary failure keep payment row with placeholder."""
     try:
-        if receipt_base64:
-            result = upload_image(receipt_base64, folder="buxinev/receipts")
+        if _valid_receipt_b64(receipt_base64):
+            result = upload_image(receipt_base64.strip(), folder="buxinev/receipts")
         elif file and file.filename:
             result = upload_image(file, folder="buxinev/receipts")
         else:
@@ -62,21 +69,22 @@ def submit_payment():
     """Payment + receipt: JSON {receipt_base64} or multipart form."""
     user = g.current_user
 
-    if request.is_json:
-        data = request.get_json() or {}
-        class_type = data.get("class_type") or user.class_type or "group"
-        method = data.get("payment_method", "")
-        receipt_base64 = data.get("receipt_base64", "")
-        file = None
-    else:
-        class_type = request.form.get("class_type") or user.class_type or "group"
-        method = request.form.get("payment_method", "")
-        receipt_base64 = None
-        file = request.files.get("receipt")
+    # force=True: some clients/proxies drop Content-Type; still parse JSON body
+    data = request.get_json(silent=True, force=True) or {}
+    file = request.files.get("receipt")
+    class_type = (
+        data.get("class_type")
+        or request.form.get("class_type")
+        or user.class_type
+        or "group"
+    )
+    method = data.get("payment_method") or request.form.get("payment_method") or ""
+    receipt_base64 = data.get("receipt_base64") or data.get("receipt") or ""
 
     if not method:
         return jsonify({"error": "Select a payment method"}), 400
-    if not receipt_base64 and (not file or not file.filename):
+    has_file = file and file.filename
+    if not _valid_receipt_b64(receipt_base64) and not has_file:
         return jsonify({"error": "Payment receipt image is required"}), 400
 
     if user.class_type != class_type:
@@ -136,8 +144,9 @@ def upload_receipt():
         return jsonify({"error": "No pending payment found"}), 404
 
     file = request.files.get("receipt")
-    receipt_base64 = (request.get_json(silent=True) or {}).get("receipt_base64")
-    if receipt_base64 or (file and file.filename):
+    data = request.get_json(silent=True, force=True) or {}
+    receipt_base64 = data.get("receipt_base64") or data.get("receipt") or ""
+    if _valid_receipt_b64(receipt_base64) or (file and file.filename):
         ok, err = _save_receipt(payment, file=file, receipt_base64=receipt_base64)
         if not ok:
             return jsonify({"error": err}), 400
