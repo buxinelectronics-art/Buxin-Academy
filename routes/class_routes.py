@@ -1,6 +1,6 @@
 from flask import Blueprint, g, jsonify
 
-from middlewares.auth import token_required
+from middlewares.auth import active_student_required
 from models import db
 from models.class_model import ClassSession
 
@@ -8,7 +8,7 @@ class_bp = Blueprint("classes", __name__, url_prefix="/api/classes")
 
 
 @class_bp.route("", methods=["GET"])
-@token_required
+@active_student_required
 def list_classes():
     class_type = g.current_user.class_type
     query = ClassSession.query
