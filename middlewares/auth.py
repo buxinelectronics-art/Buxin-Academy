@@ -32,7 +32,11 @@ def token_required(f):
         try:
             token = auth_header.split(" ", 1)[1]
             payload = decode_token(token)
-            user = db.session.get(User, payload["sub"])
+            try:
+                user_id = int(payload["sub"])
+            except (KeyError, TypeError, ValueError):
+                return jsonify({"error": "Invalid token"}), 401
+            user = db.session.get(User, user_id)
             if not user:
                 return jsonify({"error": "User not found"}), 401
             g.current_user = user
