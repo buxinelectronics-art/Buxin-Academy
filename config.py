@@ -52,5 +52,18 @@ class Config:
 
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10MB (JSON base64 receipts)
 
+    MODEMPAY_PUBLIC_KEY = os.getenv("MODEMPAY_PUBLIC_KEY", "")
+    MODEMPAY_SECRET_KEY = os.getenv("MODEMPAY_SECRET_KEY", "")
+    MODEMPAY_WEBHOOK_SECRET = os.getenv("MODEMPAY_WEBHOOK_SECRET", "")
+    # Frontend origin for Modem Pay return URLs (no trailing slash)
+    FRONTEND_URL = os.getenv(
+        "FRONTEND_URL",
+        "https://buxinelectronics-art.github.io/Buxin-Academy-Front-End",
+    ).rstrip("/")
+    BACKEND_URL = os.getenv(
+        "BACKEND_URL",
+        "https://buxin-academy.onrender.com",
+    ).rstrip("/")
+
     BASE_GROUP_PRICE_USD = 5.0
     BASE_INDIVIDUAL_PRICE_USD = 100.0

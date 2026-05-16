@@ -109,3 +109,21 @@ http://localhost:5500,https://your-frontend.vercel.app
 4. Add the frontend URL to `CORS_ORIGINS` on Render and redeploy.
 
 The **frontend** calls `/api/wake` once per browser tab on load so the API starts waking as soon as someone opens the site (GitHub Pages does not contact Render by itself).
+
+## Modem Pay (Wave / AfriMoney)
+
+For students in **The Gambia**, Wave and AfriMoney use [Modem Pay](https://docs.modempay.com/documentation/payments/overview). Payment is instant — no receipt upload; the account becomes **active** automatically.
+
+Add on Render (never commit secret keys to GitHub):
+
+| Key | Value |
+|-----|--------|
+| `MODEMPAY_PUBLIC_KEY` | Your `pk_live_…` from [merchant.modempay.com](https://merchant.modempay.com/developers) |
+| `MODEMPAY_SECRET_KEY` | Your `sk_live_…` (server only) |
+| `MODEMPAY_WEBHOOK_SECRET` | Optional; from Developers → Webhooks (or use secret key for callbacks) |
+| `FRONTEND_URL` | `https://academy.techbuxin.com` or your GitHub Pages URL |
+| `BACKEND_URL` | `https://buxin-academy.onrender.com` |
+
+Webhook URL (optional backup): `https://buxin-academy.onrender.com/api/payments/modempay/webhook`
+
+Other payment methods (bank transfer, etc.) still use receipt upload and admin approval.

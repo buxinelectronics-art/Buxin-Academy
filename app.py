@@ -51,6 +51,9 @@ def create_app():
     app.register_blueprint(auth_bp)
     app.register_blueprint(country_bp)
     app.register_blueprint(payment_bp)
+    from routes.payment_routes import modempay_webhook
+
+    limiter.exempt(modempay_webhook)
     app.register_blueprint(schedule_bp)
     app.register_blueprint(community_bp)
     app.register_blueprint(admin_bp)
@@ -98,11 +101,32 @@ def create_app():
     with app.app_context():
         try:
             db.create_all()
+            _ensure_payment_columns()
             _seed_defaults()
         except Exception as exc:
             app.logger.error("Database init on startup: %s", exc)
 
     return app
+
+
+def _ensure_payment_columns():
+    """Add Modem Pay columns on existing PostgreSQL deployments."""
+    from flask import current_app
+
+    if not db.engine.url.drivername.startswith("postgres"):
+        return
+    stmts = [
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_channel VARCHAR(20) DEFAULT 'manual'",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS modem_transaction_id VARCHAR(120)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS modem_intent_id VARCHAR(120)",
+    ]
+    for sql in stmts:
+        try:
+            db.session.execute(text(sql))
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.debug("payment column migration: %s", exc)
 
 
 def _seed_defaults():

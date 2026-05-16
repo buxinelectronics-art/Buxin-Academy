@@ -10,8 +10,82 @@ from models.payment import Payment
 from models.user import User
 from services.cloudinary_service import PLACEHOLDER_RECEIPT, upload_image
 from services.currency_service import get_class_prices
+from services.modempay_service import (
+    ModemPayError,
+    create_payment_intent,
+    is_configured,
+    parse_webhook_event,
+    retrieve_transaction,
+)
 
 payment_bp = Blueprint("payments", __name__, url_prefix="/api/payments")
+
+MODEMPAY_INSTANT_METHODS = frozenset({"Wave", "AfriMoney"})
+MODEMPAY_COUNTRIES = frozenset({"GM"})
+
+
+def _activate_student_payment(payment, *, admin_id=None, details=""):
+    """Approve payment and unlock student dashboard."""
+    payment.status = "approved"
+    payment.reviewed_at = datetime.utcnow()
+    user = payment.user
+    user.status = "active"
+    Payment.query.filter(
+        Payment.user_id == user.id,
+        Payment.id != payment.id,
+        Payment.status == "pending",
+    ).update({"status": "rejected"})
+    if admin_id:
+        db.session.add(
+            AdminAction(
+                admin_id=admin_id,
+                action_type="approve_payment",
+                target_user_id=user.id,
+                details=details or f"Payment #{payment.id} approved",
+            )
+        )
+    db.session.add(
+        Notification(
+            user_id=user.id,
+            title="Payment Approved!",
+            message="Welcome to Buxin Academy! Your dashboard and community are now unlocked.",
+        )
+    )
+    db.session.commit()
+    from flask import current_app
+
+    current_app.extensions["socketio"].emit(
+        "notification",
+        {"title": "Payment Approved!", "message": "Your account is now active."},
+        room=f"user_{user.id}",
+    )
+    return user
+
+
+def _amount_matches(payment: Payment, paid_amount) -> bool:
+    try:
+        paid = float(paid_amount)
+        expected = float(payment.amount_local)
+        return abs(paid - expected) <= max(1.0, expected * 0.02)
+    except (TypeError, ValueError):
+        return False
+
+
+def _complete_modempay_payment(payment: Payment, transaction_id: str, txn: dict):
+    if payment.status == "approved":
+        return payment.user
+    status = (txn.get("status") or "").lower()
+    if status not in ("completed", "succeeded", "success"):
+        raise ModemPayError("Payment not completed yet")
+    if not _amount_matches(payment, txn.get("amount")):
+        raise ModemPayError("Payment amount does not match")
+    payment.modem_transaction_id = transaction_id
+    payment.payment_channel = "modempay"
+    payment.receipt_url = payment.receipt_url or f"modempay://{transaction_id}"
+    return _activate_student_payment(
+        payment,
+        details=f"Modem Pay auto-approved ({transaction_id})",
+    )
 
 
 def _valid_receipt_b64(value) -> bool:
@@ -168,6 +242,158 @@ def upload_receipt():
     return jsonify({"payment": payment.to_dict()})
 
 
+@payment_bp.route("/modempay/config", methods=["GET"])
+def modempay_config():
+    """Public Modem Pay settings (public key only)."""
+    enabled = is_configured()
+    return jsonify(
+        {
+            "enabled": enabled,
+            "public_key": current_app.config.get("MODEMPAY_PUBLIC_KEY", "") if enabled else "",
+            "instant_methods": sorted(MODEMPAY_INSTANT_METHODS),
+            "countries": sorted(MODEMPAY_COUNTRIES),
+        }
+    )
+
+
+@payment_bp.route("/modempay/session", methods=["POST"])
+@token_required
+def modempay_session():
+    """Start Wave / AfriMoney checkout via Modem Pay."""
+    if not is_configured():
+        return jsonify({"error": "Modem Pay is not configured on the server"}), 503
+
+    user = g.current_user
+    if user.country_code.upper() not in MODEMPAY_COUNTRIES:
+        return jsonify({"error": "Modem Pay is only available in The Gambia"}), 400
+
+    data = request.get_json() or {}
+    class_type = data.get("class_type") or user.class_type or "group"
+    method = data.get("payment_method", "")
+    if method not in MODEMPAY_INSTANT_METHODS:
+        return jsonify({"error": "Invalid instant payment method"}), 400
+
+    if user.class_type != class_type:
+        user.class_type = class_type
+
+    prices = get_class_prices(user.country_code)
+    price = prices["group"] if class_type == "group" else prices["individual"]
+    amount_gmd = int(round(price["local"]))
+
+    payment = _get_or_create_pending_payment(user, class_type, method)
+    payment.payment_channel = "modempay"
+
+    frontend = current_app.config["FRONTEND_URL"]
+    metadata = {
+        "user_id": user.id,
+        "payment_id": payment.id,
+        "class_type": class_type,
+        "payment_method": method,
+    }
+    title = (
+        "Buxin Academy — Individual Class"
+        if class_type == "individual"
+        else "Buxin Academy — Group Class"
+    )
+
+    try:
+        intent = create_payment_intent(
+            amount_gmd,
+            currency=price["currency"],
+            title=title,
+            description=f"{method} payment for {user.email}",
+            metadata=metadata,
+            callback_url=f"{current_app.config['BACKEND_URL']}/api/payments/modempay/webhook",
+            return_url=f"{frontend}/payment-success.html",
+            cancel_url=f"{frontend}/payment.html?type={class_type}",
+            customer_email=user.email,
+            customer_name=user.full_name,
+            customer_phone=user.phone or "",
+        )
+    except ModemPayError as exc:
+        db.session.rollback()
+        return jsonify({"error": str(exc)}), 502
+
+    payment.modem_intent_id = intent.get("intent_secret") or intent.get("id")
+    db.session.commit()
+
+    return jsonify(
+        {
+            "payment_id": payment.id,
+            "amount": amount_gmd,
+            "currency": price["currency"],
+            "public_key": current_app.config["MODEMPAY_PUBLIC_KEY"],
+            "payment_link": intent.get("payment_link"),
+            "intent_secret": intent.get("intent_secret"),
+            "class_type": class_type,
+            "payment_method": method,
+        }
+    )
+
+
+@payment_bp.route("/modempay/verify", methods=["POST"])
+@token_required
+def modempay_verify():
+    """Verify Modem Pay transaction after checkout modal; unlock student immediately."""
+    if not is_configured():
+        return jsonify({"error": "Modem Pay is not configured"}), 503
+
+    data = request.get_json() or {}
+    transaction_id = data.get("transaction_id") or data.get("id")
+    payment_id = data.get("payment_id")
+    if not transaction_id or not payment_id:
+        return jsonify({"error": "transaction_id and payment_id are required"}), 400
+
+    payment = db.session.get(Payment, int(payment_id))
+    if not payment or payment.user_id != g.current_user.id:
+        return jsonify({"error": "Payment not found"}), 404
+
+    try:
+        txn = retrieve_transaction(transaction_id)
+        user = _complete_modempay_payment(payment, transaction_id, txn)
+        return jsonify(
+            {
+                "payment": payment.to_dict(),
+                "user": user.to_dict(),
+                "message": "Payment successful! Your account is now active.",
+            }
+        )
+    except ModemPayError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@payment_bp.route("/modempay/webhook", methods=["POST"])
+def modempay_webhook():
+    """Modem Pay charge.succeeded → auto-approve student."""
+    raw = request.get_data()
+    signature = request.headers.get("x-modem-signature", "")
+    event = parse_webhook_event(raw, signature)
+    if not event:
+        return jsonify({"error": "Invalid signature"}), 400
+
+    event_type = event.get("event", "")
+    payload = event.get("payload") or {}
+    if event_type != "charge.succeeded":
+        return jsonify({"received": True}), 200
+
+    metadata = payload.get("metadata") or {}
+    payment_id = metadata.get("payment_id")
+    transaction_id = payload.get("id")
+    if not payment_id or not transaction_id:
+        return jsonify({"received": True}), 200
+
+    payment = db.session.get(Payment, int(payment_id))
+    if not payment:
+        return jsonify({"received": True}), 200
+
+    try:
+        _complete_modempay_payment(payment, transaction_id, payload)
+    except ModemPayError as exc:
+        current_app.logger.warning("Modem Pay webhook: %s", exc)
+
+    return jsonify({"received": True}), 200
+
+
 @payment_bp.route("/my", methods=["GET"])
 @token_required
 def my_payments():
@@ -211,37 +437,10 @@ def approve_payment(payment_id):
     payment = db.session.get(Payment, payment_id)
     if not payment:
         return jsonify({"error": "Payment not found"}), 404
-    payment.status = "approved"
-    payment.reviewed_at = datetime.utcnow()
-    user = payment.user
-    user.status = "active"
-    Payment.query.filter(
-        Payment.user_id == user.id,
-        Payment.id != payment.id,
-        Payment.status == "pending",
-    ).update({"status": "rejected"})
-    db.session.add(
-        AdminAction(
-            admin_id=g.current_user.id,
-            action_type="approve_payment",
-            target_user_id=user.id,
-            details=f"Payment #{payment_id} approved",
-        )
-    )
-    db.session.add(
-        Notification(
-            user_id=user.id,
-            title="Payment Approved!",
-            message="Welcome to Buxin Academy! Your dashboard and community are now unlocked.",
-        )
-    )
-    db.session.commit()
-    from flask import current_app
-
-    current_app.extensions["socketio"].emit(
-        "notification",
-        {"title": "Payment Approved!", "message": "Your account is now active."},
-        room=f"user_{user.id}",
+    user = _activate_student_payment(
+        payment,
+        admin_id=g.current_user.id,
+        details=f"Payment #{payment_id} approved",
     )
     return jsonify({"payment": payment.to_dict(), "user": user.to_dict()})
 

@@ -13,6 +13,9 @@ class Payment(db.Model):
     currency = db.Column(db.String(10))
     payment_method = db.Column(db.String(50))
     receipt_url = db.Column(db.String(500))
+    payment_channel = db.Column(db.String(20), default="manual")  # manual | modempay
+    modem_transaction_id = db.Column(db.String(120))
+    modem_intent_id = db.Column(db.String(120))
     status = db.Column(db.String(20), default="pending")  # pending | approved | rejected
     class_type = db.Column(db.String(20))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -27,6 +30,8 @@ class Payment(db.Model):
             "currency": self.currency,
             "payment_method": self.payment_method,
             "receipt_url": self.receipt_url,
+            "payment_channel": self.payment_channel or "manual",
+            "modem_transaction_id": self.modem_transaction_id,
             "status": self.status,
             "class_type": self.class_type,
             "created_at": self.created_at.isoformat() if self.created_at else None,
