@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 
 from middlewares.auth import admin_required, token_required
 from models import db
@@ -8,10 +8,27 @@ from models.admin_action import AdminAction
 from models.notification import Notification
 from models.payment import Payment
 from models.user import User
-from services.cloudinary_service import upload_image
+from services.cloudinary_service import PLACEHOLDER_RECEIPT, upload_image
 from services.currency_service import get_class_prices
 
 payment_bp = Blueprint("payments", __name__, url_prefix="/api/payments")
+
+
+def _save_receipt(payment, file=None, receipt_base64=None):
+    """Upload receipt; on Cloudinary failure keep payment row with placeholder."""
+    try:
+        if receipt_base64:
+            result = upload_image(receipt_base64, folder="buxinev/receipts")
+        elif file and file.filename:
+            result = upload_image(file, folder="buxinev/receipts")
+        else:
+            return False, "Payment receipt image is required"
+        payment.receipt_url = result["url"]
+        return True, None
+    except Exception as exc:
+        current_app.logger.error("Receipt upload for payment user_id=%s: %s", payment.user_id, exc)
+        payment.receipt_url = PLACEHOLDER_RECEIPT
+        return True, str(exc)
 
 
 def _get_or_create_pending_payment(user, class_type, method):
@@ -42,36 +59,56 @@ def _get_or_create_pending_payment(user, class_type, method):
 @payment_bp.route("/submit", methods=["POST"])
 @token_required
 def submit_payment():
-    """Register payment + receipt in one request (multipart)."""
+    """Payment + receipt: JSON {receipt_base64} or multipart form."""
     user = g.current_user
-    class_type = request.form.get("class_type") or user.class_type or "group"
-    method = request.form.get("payment_method", "")
-    file = request.files.get("receipt")
 
-    if not file or not file.filename:
-        return jsonify({"error": "Payment receipt image is required"}), 400
+    if request.is_json:
+        data = request.get_json() or {}
+        class_type = data.get("class_type") or user.class_type or "group"
+        method = data.get("payment_method", "")
+        receipt_base64 = data.get("receipt_base64", "")
+        file = None
+    else:
+        class_type = request.form.get("class_type") or user.class_type or "group"
+        method = request.form.get("payment_method", "")
+        receipt_base64 = None
+        file = request.files.get("receipt")
+
     if not method:
         return jsonify({"error": "Select a payment method"}), 400
+    if not receipt_base64 and (not file or not file.filename):
+        return jsonify({"error": "Payment receipt image is required"}), 400
 
     if user.class_type != class_type:
         user.class_type = class_type
 
     try:
         payment = _get_or_create_pending_payment(user, class_type, method)
-        result = upload_image(file, folder="buxinev/receipts")
-        payment.receipt_url = result["url"]
+        ok, upload_note = _save_receipt(payment, file=file, receipt_base64=receipt_base64)
+        if not ok:
+            db.session.rollback()
+            return jsonify({"error": upload_note}), 400
+
+        msg = "Your payment is under review. We'll notify you when approved."
+        if upload_note:
+            msg += " (Receipt stored; admin may request a clearer image if needed.)"
+
         db.session.add(
             Notification(
                 user_id=user.id,
                 title="Receipt Uploaded",
-                message="Your payment is under review. We'll notify you when approved.",
+                message=msg,
             )
         )
         db.session.commit()
-        return jsonify({"payment": payment.to_dict(), "user": user.to_dict()}), 201
+        payload = {"payment": payment.to_dict(), "user": user.to_dict()}
+        if upload_note:
+            payload["upload_warning"] = upload_note
+        return jsonify(payload), 201
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
+        current_app.logger.exception("submit_payment failed")
+        return jsonify({"error": f"Payment could not be saved: {str(e)}"}), 500
 
 
 @payment_bp.route("", methods=["POST"])
@@ -99,12 +136,13 @@ def upload_receipt():
         return jsonify({"error": "No pending payment found"}), 404
 
     file = request.files.get("receipt")
-    if file and file.filename:
-        try:
-            result = upload_image(file, folder="buxinev/receipts")
-            payment.receipt_url = result["url"]
-        except Exception as e:
-            return jsonify({"error": f"Upload failed: {str(e)}"}), 500
+    receipt_base64 = (request.get_json(silent=True) or {}).get("receipt_base64")
+    if receipt_base64 or (file and file.filename):
+        ok, err = _save_receipt(payment, file=file, receipt_base64=receipt_base64)
+        if not ok:
+            return jsonify({"error": err}), 400
+        if err:
+            current_app.logger.warning("upload_receipt partial failure user_id=%s: %s", user.id, err)
     elif request.get_json() and request.get_json().get("receipt_url"):
         payment.receipt_url = request.get_json()["receipt_url"]
     else:

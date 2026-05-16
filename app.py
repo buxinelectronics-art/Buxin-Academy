@@ -57,6 +57,12 @@ def create_app():
     app.register_blueprint(notification_bp)
     app.register_blueprint(class_bp)
 
+    @app.errorhandler(413)
+    def request_entity_too_large(_e):
+        return jsonify(
+            {"error": "Receipt is too large. Use a smaller image or screenshot."}
+        ), 413
+
     @app.route("/api/health")
     @limiter.exempt
     def health():

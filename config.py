@@ -50,7 +50,7 @@ class Config:
         if o.strip()
     ]
 
-    MAX_CONTENT_LENGTH = 5 * 1024 * 1024  # 5MB uploads
+    MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10MB (JSON base64 receipts)
 
     BASE_GROUP_PRICE_USD = 5.0
     BASE_INDIVIDUAL_PRICE_USD = 100.0
