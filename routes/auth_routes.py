@@ -25,7 +25,6 @@ def register():
             return jsonify({"error": "Email already registered"}), 409
         if existing.status == "active":
             return jsonify({"error": "Email already registered"}), 409
-        # Pending or rejected: treat as a fresh signup (new password and details).
         existing.full_name = data["full_name"].strip()
         existing.phone = data.get("phone", "") or ""
         existing.country_code = data["country_code"].upper()
@@ -38,7 +37,9 @@ def register():
 
         if data.get("profile_picture_base64"):
             try:
-                result = upload_image(data["profile_picture_base64"], folder="buxinev/profiles")
+                result = upload_image(
+                    data["profile_picture_base64"], folder="buxinev/profiles"
+                )
                 existing.profile_picture = result["url"]
             except Exception:
                 pass

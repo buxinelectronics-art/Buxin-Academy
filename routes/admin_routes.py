@@ -105,7 +105,7 @@ def update_student(user_id):
 def update_student_status(user_id):
     data = request.get_json() or {}
     user = db.session.get(User, user_id)
-    if not user or user.role != "student":
+    if not user:
         return jsonify({"error": "Student not found"}), 404
     user.status = data.get("status", user.status)
     db.session.commit()
