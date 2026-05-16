@@ -177,21 +177,10 @@ def _ensure_community_columns():
 
 
 def _seed_defaults():
-    from models.schedule import Schedule
     from models.user import User
+    from services.schedule_slots import sync_ist_schedule_slots
 
-    if not Schedule.query.first():
-        defaults = [
-            ("Monday", "6:00 PM"),
-            ("Tuesday", "8:00 PM"),
-            ("Wednesday", "5:00 PM"),
-            ("Thursday", "7:00 PM"),
-            ("Friday", "4:00 PM"),
-            ("Saturday", "10:00 AM"),
-        ]
-        for day, time in defaults:
-            db.session.add(Schedule(day_of_week=day, time_slot=time))
-        db.session.commit()
+    sync_ist_schedule_slots()
 
     admin_email = os.getenv("ADMIN_EMAIL", "admin@buxinev.com")
     if not User.query.filter_by(email=admin_email).first():

@@ -19,7 +19,8 @@ class Schedule(db.Model):
             "day_of_week": self.day_of_week,
             "time_slot": self.time_slot,
             "is_available": self.is_available,
-            "label": f"{self.day_of_week} {self.time_slot}",
+            "label": f"{self.day_of_week} · {self.time_slot} (IST)",
+            "timezone": "IST",
         }
 
 

@@ -3,14 +3,19 @@ from flask import Blueprint, g, jsonify, request
 from middlewares.auth import active_student_required, admin_required, token_required
 from models import db
 from models.schedule import Schedule, StudentSchedule
+from services.schedule_slots import SCHEDULE_RULES, ordered_available_slots
 
 schedule_bp = Blueprint("schedules", __name__, url_prefix="/api/schedules")
 
 
 @schedule_bp.route("", methods=["GET"])
 def list_schedules():
-    slots = Schedule.query.filter_by(is_available=True).all()
-    return jsonify({"schedules": [s.to_dict() for s in slots]})
+    slots = ordered_available_slots()
+    return jsonify({
+        "schedules": [s.to_dict() for s in slots],
+        "timezone": SCHEDULE_RULES["timezone"],
+        "rules": SCHEDULE_RULES,
+    })
 
 
 @schedule_bp.route("", methods=["POST"])
@@ -33,8 +38,17 @@ def create_schedule():
 def select_schedules():
     data = request.get_json() or {}
     schedule_ids = data.get("schedule_ids", [])
-    if len(schedule_ids) < 1:
-        return jsonify({"error": "Select at least one preferred schedule"}), 400
+    if len(schedule_ids) != 2:
+        return jsonify({
+            "error": "Select exactly 2 time slots per week (2 hours, IST). "
+            "Two different days or 2 slots on the same day.",
+        }), 400
+
+    found = Schedule.query.filter(
+        Schedule.id.in_(schedule_ids), Schedule.is_available.is_(True)
+    ).count()
+    if found != 2:
+        return jsonify({"error": "Invalid or unavailable time slot"}), 400
 
     StudentSchedule.query.filter_by(student_id=g.current_user.id).delete()
     for i, sid in enumerate(schedule_ids[:2]):
