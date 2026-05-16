@@ -71,6 +71,12 @@ def create_app():
     def health():
         return jsonify({"status": "ok", "platform": "Buxin Academy"})
 
+    @app.route("/api/ping")
+    @limiter.exempt
+    def ping():
+        """Instant response so Render starts the process before DB is ready."""
+        return jsonify({"status": "ok"})
+
     @app.route("/api/wake")
     @limiter.exempt
     def wake():

@@ -108,7 +108,9 @@ http://localhost:5500,https://your-frontend.vercel.app
 3. Put that URL in `frontend/js/config.js` as `PROD_API_URL`.
 4. Add the frontend URL to `CORS_ORIGINS` on Render and redeploy.
 
-The **frontend** calls `/api/wake` as soon as any page loads (`config.js` in `<head>`), then pings every 3 minutes while the tab is open so Render and the database stay warm during use. GitHub Pages does not contact Render by itself.
+The **frontend** calls `/api/ping` (instant) and `/api/wake` (DB check) as soon as any page loads (`config.js`), with long retries for cold start. While the tab is open, it pings every **90 seconds** so Render free tier (idle ~15 min) stays awake during use.
+
+**Optional (recommended):** Use a free cron such as [cron-job.org](https://cron-job.org) to `GET https://YOUR-SERVICE.onrender.com/api/ping` every **10 minutes** — this keeps the API warm even when nobody has the site open. Render’s free plan always sleeps after ~15 minutes without traffic; only a paid instance or external pings avoid that completely.
 
 ## Modem Pay (Wave / AfriMoney)
 
