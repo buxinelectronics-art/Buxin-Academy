@@ -13,6 +13,35 @@ If you have to **Manual Deploy** every time you push, fix the link between GitHu
 
 Auto-deploy cannot be turned on from this codebase; it’s only in the Render + GitHub UI.
 
+### If pushes never start a deploy (nothing in Render “Events”)
+
+Work through these in order:
+
+1. **Correct repo on the service**  
+   Your **API** service must be connected to **`Buxin-Academy`** (backend), not `Buxin-Academy-Front-End`. Pushing the frontend repo will not deploy the backend.
+
+2. **Branch name**  
+   Render must watch the **same branch you push to** (e.g. `main`). If your default branch is `master` but Render is set to `main`, pushes won’t trigger.
+
+3. **Auto-Deploy is really “On”**  
+   **Settings → Build & Deploy → Auto-Deploy** = **On Commit** (not “Off”). Save if you change it.
+
+4. **GitHub App access (very common)**  
+   Render uses the **Render GitHub App**, not only a webhook:
+
+   - GitHub → **Settings** → **Applications** → **Installed GitHub Apps** → **Render** → **Configure**.
+   - Under **Repository access**, either **All repositories** or **Only select repositories** must **include** `buxinelectronics-art/Buxin-Academy` (and any others Render should see).  
+   - If the repo was added to GitHub **after** you limited access, it won’t be on the list — add it and save.
+
+5. **Reconnect the service**  
+   In Render: **Settings → Build & Deploy →** disconnect Git and connect again; pick the repo and branch. That recreates permission + hooks.
+
+6. **Confirm GitHub sees the push**  
+   On GitHub, open the repo → **Commits** and confirm your commit appears on the branch Render uses.
+
+7. **Manual deploy once**  
+   After fixing the above, use **Manual Deploy** once; then push a tiny commit (e.g. README) and check **Events** for a new build.
+
 ## Service settings
 
 | Field | Value |
