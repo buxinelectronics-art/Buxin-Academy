@@ -26,7 +26,28 @@ def _headers():
     return {
         "Authorization": f"Bearer {current_app.config['MODEMPAY_SECRET_KEY']}",
         "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "BuxinAcademy/1.0",
     }
+
+
+def _parse_json_response(resp: requests.Response) -> dict:
+    text = (resp.text or "").strip()
+    if not text:
+        return {}
+    try:
+        return resp.json()
+    except ValueError:
+        snippet = text[:200].replace("\n", " ")
+        logger.error("Modem Pay non-JSON response %s: %s", resp.status_code, snippet)
+        if resp.status_code == 403:
+            raise ModemPayError(
+                "Modem Pay API blocked this server (403). "
+                "Use Wave/AfriMoney checkout in the browser, or contact Modem Pay to whitelist your backend."
+            )
+        raise ModemPayError(
+            f"Modem Pay returned an invalid response (HTTP {resp.status_code})"
+        )
 
 
 def create_payment_intent(
@@ -74,7 +95,7 @@ def create_payment_intent(
         json=payload,
         timeout=30,
     )
-    body = resp.json() if resp.content else {}
+    body = _parse_json_response(resp)
     if not resp.ok:
         logger.error("Modem Pay intent failed: %s %s", resp.status_code, body)
         msg = body.get("message") or body.get("error")
@@ -90,7 +111,7 @@ def retrieve_transaction(transaction_id: str) -> dict:
         headers=_headers(),
         timeout=30,
     )
-    body = resp.json() if resp.content else {}
+    body = _parse_json_response(resp)
     if not resp.ok:
         logger.error("Modem Pay transaction fetch failed: %s", body)
         raise ModemPayError(body.get("message") or "Could not verify payment")

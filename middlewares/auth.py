@@ -11,7 +11,7 @@ def create_token(user_id: int, role: str) -> str:
     from datetime import datetime, timedelta
 
     payload = {
-        "sub": user_id,
+        "sub": str(user_id),
         "role": role,
         "exp": datetime.utcnow()
         + timedelta(hours=current_app.config["JWT_EXPIRY_HOURS"]),

@@ -12,7 +12,6 @@ from services.cloudinary_service import PLACEHOLDER_RECEIPT, upload_image
 from services.currency_service import get_class_prices
 from services.modempay_service import (
     ModemPayError,
-    create_payment_intent,
     is_configured,
     parse_webhook_event,
     retrieve_transaction,
@@ -60,6 +59,41 @@ def _activate_student_payment(payment, *, admin_id=None, details=""):
         room=f"user_{user.id}",
     )
     return user
+
+
+def _metadata_payment_id(metadata) -> int | None:
+    if not metadata or not isinstance(metadata, dict):
+        return None
+    raw = metadata.get("payment_id")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _client_transaction_ok(txn: dict, payment: Payment, transaction_id: str) -> bool:
+    """Fallback when Modem Pay secret API is unreachable from the server."""
+    if not txn or not isinstance(txn, dict):
+        return False
+    tx_id = str(
+        txn.get("id")
+        or txn.get("transaction_id")
+        or txn.get("transaction_reference")
+        or ""
+    )
+    if tx_id and tx_id != str(transaction_id):
+        return False
+    status = (txn.get("status") or "").lower()
+    if status not in ("completed", "succeeded", "success"):
+        return False
+    if not _amount_matches(payment, txn.get("amount")):
+        return False
+    meta_pid = _metadata_payment_id(txn.get("metadata"))
+    if meta_pid is not None and meta_pid != payment.id:
+        return False
+    return True
 
 
 def _amount_matches(payment: Payment, paid_amount) -> bool:
@@ -284,49 +318,15 @@ def modempay_session():
 
     payment = _get_or_create_pending_payment(user, class_type, method)
     payment.payment_channel = "modempay"
-
-    frontend = current_app.config["FRONTEND_URL"]
-    metadata = {
-        "user_id": user.id,
-        "payment_id": payment.id,
-        "class_type": class_type,
-        "payment_method": method,
-    }
-    title = (
-        "Buxin Academy — Individual Class"
-        if class_type == "individual"
-        else "Buxin Academy — Group Class"
-    )
-
-    try:
-        intent = create_payment_intent(
-            amount_gmd,
-            currency=price["currency"],
-            title=title,
-            description=f"{method} payment for {user.email}",
-            metadata=metadata,
-            callback_url=f"{current_app.config['BACKEND_URL']}/api/payments/modempay/webhook",
-            return_url=f"{frontend}/payment-success.html",
-            cancel_url=f"{frontend}/payment.html?type={class_type}",
-            customer_email=user.email,
-            customer_name=user.full_name,
-            customer_phone=user.phone or "",
-        )
-    except ModemPayError as exc:
-        db.session.rollback()
-        return jsonify({"error": str(exc)}), 502
-
-    payment.modem_intent_id = intent.get("intent_secret") or intent.get("id")
     db.session.commit()
 
+    # Inline ModemPayCheckout uses the public key in the browser — no server intent required.
     return jsonify(
         {
             "payment_id": payment.id,
             "amount": amount_gmd,
             "currency": price["currency"],
             "public_key": current_app.config["MODEMPAY_PUBLIC_KEY"],
-            "payment_link": intent.get("payment_link"),
-            "intent_secret": intent.get("intent_secret"),
             "class_type": class_type,
             "payment_method": method,
         }
@@ -343,6 +343,7 @@ def modempay_verify():
     data = request.get_json() or {}
     transaction_id = data.get("transaction_id") or data.get("id")
     payment_id = data.get("payment_id")
+    client_txn = data.get("transaction")
     if not transaction_id or not payment_id:
         return jsonify({"error": "transaction_id and payment_id are required"}), 400
 
@@ -350,9 +351,39 @@ def modempay_verify():
     if not payment or payment.user_id != g.current_user.id:
         return jsonify({"error": "Payment not found"}), 404
 
+    if payment.status == "approved":
+        return jsonify(
+            {
+                "payment": payment.to_dict(),
+                "user": payment.user.to_dict(),
+                "message": "Payment already approved.",
+            }
+        )
+
+    txn = None
     try:
         txn = retrieve_transaction(transaction_id)
-        user = _complete_modempay_payment(payment, transaction_id, txn)
+    except ModemPayError as exc:
+        current_app.logger.warning(
+            "Modem Pay retrieve failed for %s: %s", transaction_id, exc
+        )
+        if isinstance(client_txn, dict) and _client_transaction_ok(
+            client_txn, payment, str(transaction_id)
+        ):
+            txn = client_txn
+        else:
+            return jsonify(
+                {
+                    "error": (
+                        "Could not verify payment with Modem Pay yet. "
+                        "If you completed payment, wait a moment and refresh — "
+                        "or contact support with your transaction reference."
+                    )
+                }
+            ), 502
+
+    try:
+        user = _complete_modempay_payment(payment, str(transaction_id), txn)
         return jsonify(
             {
                 "payment": payment.to_dict(),

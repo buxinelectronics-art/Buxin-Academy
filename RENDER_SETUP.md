@@ -114,6 +114,8 @@ The **frontend** calls `/api/wake` once per browser tab on load so the API start
 
 For students in **The Gambia**, Wave and AfriMoney use [Modem Pay](https://docs.modempay.com/documentation/payments/overview). Payment is instant — no receipt upload; the account becomes **active** automatically.
 
+The checkout modal runs in the **browser** (public key only). The backend creates a pending payment row and verifies the transaction after checkout — it does **not** need to call Modem Pay’s server API to open the modal.
+
 Add on Render (never commit secret keys to GitHub):
 
 | Key | Value |
