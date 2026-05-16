@@ -5,6 +5,7 @@ from models import db
 from models.notification import Notification
 from models.user import User
 from services.cloudinary_service import upload_image
+from services.subscription_service import is_subscription_active, sync_subscription_status
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
@@ -23,8 +24,15 @@ def register():
     if existing:
         if existing.role != "student":
             return jsonify({"error": "Email already registered"}), 409
-        if existing.status == "active":
+        sync_subscription_status(existing, commit=False)
+        if existing.status == "active" and is_subscription_active(existing):
             return jsonify({"error": "Email already registered"}), 409
+        if existing.status in ("active", "expired"):
+            return jsonify(
+                {
+                    "error": "Account already exists. Log in to renew your monthly payment.",
+                }
+            ), 409
         existing.full_name = data["full_name"].strip()
         existing.phone = data.get("phone", "") or ""
         existing.country_code = data["country_code"].upper()
@@ -86,6 +94,8 @@ def login():
     if not user or not user.check_password(password):
         return jsonify({"error": "Invalid email or password"}), 401
 
+    if user.role == "student":
+        sync_subscription_status(user)
     token = create_token(user.id, user.role)
     return jsonify({"token": token, "user": user.to_dict()})
 
@@ -93,7 +103,10 @@ def login():
 @auth_bp.route("/me", methods=["GET"])
 @token_required
 def me():
-    return jsonify({"user": g.current_user.to_dict()})
+    user = g.current_user
+    if user.role == "student":
+        sync_subscription_status(user)
+    return jsonify({"user": user.to_dict()})
 
 
 @auth_bp.route("/password-reset-request", methods=["POST"])

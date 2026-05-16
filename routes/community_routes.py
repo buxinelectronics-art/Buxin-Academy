@@ -3,8 +3,17 @@ from flask import Blueprint, current_app, g, jsonify, request
 from middlewares.auth import active_student_required, admin_required, token_required
 from models import db
 from models.community import Comment, CommunityPost, PostLike
+from services.community_media import extract_youtube_id
 
 community_bp = Blueprint("community", __name__, url_prefix="/api/community")
+
+
+def _post_has_body(content: str, image_url, youtube_id: str | None) -> bool:
+    if image_url:
+        return True
+    if youtube_id:
+        return True
+    return bool(content and content not in ("📷",))
 
 
 def _emit(event, payload):
@@ -88,13 +97,15 @@ def create_post():
     except Exception:
         return jsonify({"error": "Could not upload image. Try a smaller JPG or PNG."}), 400
 
-    if not content and not image_url:
-        return jsonify({"error": "Write a message or add an image"}), 400
+    youtube_id = extract_youtube_id(content)
+    if not _post_has_body(content, image_url, youtube_id):
+        return jsonify({"error": "Write a message, paste a YouTube link, or add an image"}), 400
 
     post = CommunityPost(
         user_id=g.current_user.id,
-        content=content or "📷",
+        content=content or ("📷" if image_url else "🎬"),
         image_url=image_url,
+        youtube_video_id=youtube_id,
         is_pinned=bool(data.get("is_pinned")) if g.current_user.role == "admin" else False,
         is_announcement=bool(data.get("is_announcement")) if g.current_user.role == "admin" else False,
         meet_link=data.get("meet_link"),
@@ -119,6 +130,7 @@ def update_post(post_id):
     data = request.get_json() or {}
     if "content" in data:
         post.content = (data.get("content") or "").strip() or post.content
+        post.youtube_video_id = extract_youtube_id(post.content)
     if "is_pinned" in data and g.current_user.role == "admin":
         post.is_pinned = bool(data["is_pinned"])
     if "meet_link" in data:
@@ -223,17 +235,19 @@ def create_announcement():
     except Exception:
         return jsonify({"error": "Could not upload image. Try a smaller JPG or PNG."}), 400
 
-    if not content and not image_url:
-        return jsonify({"error": "Message or image required"}), 400
+    youtube_id = extract_youtube_id(content)
+    if not _post_has_body(content, image_url, youtube_id):
+        return jsonify({"error": "Message, YouTube link, or image required"}), 400
 
     post = CommunityPost(
         user_id=g.current_user.id,
-        content=content or "📷",
+        content=content or ("📷" if image_url else "🎬"),
         is_pinned=data.get("is_pinned", True),
         is_announcement=True,
         meet_link=data.get("meet_link"),
         zoom_link=data.get("zoom_link"),
         image_url=image_url,
+        youtube_video_id=youtube_id,
     )
     db.session.add(post)
     db.session.commit()

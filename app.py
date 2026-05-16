@@ -102,6 +102,8 @@ def create_app():
         try:
             db.create_all()
             _ensure_payment_columns()
+            _ensure_community_columns()
+            _ensure_user_subscription_column()
             _seed_defaults()
         except Exception as exc:
             app.logger.error("Database init on startup: %s", exc)
@@ -127,6 +129,44 @@ def _ensure_payment_columns():
         except Exception as exc:
             db.session.rollback()
             current_app.logger.debug("payment column migration: %s", exc)
+
+
+def _ensure_user_subscription_column():
+    """Add monthly subscription expiry on existing PostgreSQL deployments."""
+    from flask import current_app
+
+    if not db.engine.url.drivername.startswith("postgres"):
+        return
+    try:
+        db.session.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "subscription_expires_at TIMESTAMP"
+            )
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.debug("user subscription column migration: %s", exc)
+
+
+def _ensure_community_columns():
+    """Add YouTube video id column on existing PostgreSQL deployments."""
+    from flask import current_app
+
+    if not db.engine.url.drivername.startswith("postgres"):
+        return
+    try:
+        db.session.execute(
+            text(
+                "ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS "
+                "youtube_video_id VARCHAR(20)"
+            )
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.debug("community column migration: %s", exc)
 
 
 def _seed_defaults():

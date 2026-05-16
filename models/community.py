@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from models import db
+from services.community_media import extract_youtube_id
 
 
 class CommunityPost(db.Model):
@@ -10,6 +11,7 @@ class CommunityPost(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     content = db.Column(db.Text, nullable=False)
     image_url = db.Column(db.String(500))
+    youtube_video_id = db.Column(db.String(20))
     is_pinned = db.Column(db.Boolean, default=False)
     is_announcement = db.Column(db.Boolean, default=False)
     meet_link = db.Column(db.String(500))
@@ -30,6 +32,7 @@ class CommunityPost(db.Model):
             "author_picture": self.author.profile_picture if self.author else None,
             "content": self.content,
             "image_url": self.image_url,
+            "youtube_video_id": self.youtube_video_id or extract_youtube_id(self.content),
             "is_pinned": self.is_pinned,
             "is_announcement": self.is_announcement,
             "meet_link": self.meet_link,

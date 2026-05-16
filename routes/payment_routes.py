@@ -30,11 +30,13 @@ MODEMPAY_COUNTRIES = frozenset({"GM"})
 
 
 def _activate_student_payment(payment, *, admin_id=None, details=""):
-    """Approve payment and unlock student dashboard."""
+    """Approve payment and unlock student dashboard for one calendar month."""
+    from services.subscription_service import extend_subscription_on_payment
+
     payment.status = "approved"
     payment.reviewed_at = datetime.utcnow()
     user = payment.user
-    user.status = "active"
+    extend_subscription_on_payment(user, payment.reviewed_at)
     Payment.query.filter(
         Payment.user_id == user.id,
         Payment.id != payment.id,
@@ -53,7 +55,7 @@ def _activate_student_payment(payment, *, admin_id=None, details=""):
         Notification(
             user_id=user.id,
             title="Payment Approved!",
-            message="Welcome to Buxin Academy! Your dashboard and community are now unlocked.",
+            message="Payment approved! Your classes and community are unlocked for one month.",
         )
     )
     db.session.commit()

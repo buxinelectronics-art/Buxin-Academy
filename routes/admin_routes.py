@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from flask import Blueprint, g, jsonify, request
 
 from middlewares.auth import admin_required
@@ -199,7 +201,11 @@ def stats():
 
     return jsonify({
         "total_students": User.query.filter_by(role="student").count(),
-        "active_students": User.query.filter_by(role="student", status="active").count(),
+        "active_students": User.query.filter(
+            User.role == "student",
+            User.status == "active",
+            User.subscription_expires_at > datetime.utcnow(),
+        ).count(),
         "pending_payments": Payment.query.filter_by(status="pending").count(),
         "pending_students": User.query.filter_by(role="student", status="pending").count(),
     })
