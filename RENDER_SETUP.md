@@ -104,5 +104,8 @@ http://localhost:5500,https://your-frontend.vercel.app
 ## After deploy
 
 1. Open `https://YOUR-SERVICE.onrender.com/api/health` — should show `{"status":"ok"}`.
-2. Put that URL in `frontend/js/config.js` as `PROD_API_URL`.
-3. Add the frontend URL to `CORS_ORIGINS` on Render and redeploy.
+2. Open `https://YOUR-SERVICE.onrender.com/api/wake` — should show `{"status":"ok","db":1}` when the database is reachable.
+3. Put that URL in `frontend/js/config.js` as `PROD_API_URL`.
+4. Add the frontend URL to `CORS_ORIGINS` on Render and redeploy.
+
+The **frontend** calls `/api/wake` once per browser tab on load so the API starts waking as soon as someone opens the site (GitHub Pages does not contact Render by itself).

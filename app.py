@@ -4,6 +4,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, jsonify
+from sqlalchemy import text
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -37,7 +38,7 @@ def create_app():
     CORS(app, origins=app.config["CORS_ORIGINS"], supports_credentials=True)
     init_cloudinary(app)
 
-    Limiter(
+    limiter = Limiter(
         get_remote_address,
         app=app,
         default_limits=["200 per day", "50 per hour"],
@@ -57,8 +58,20 @@ def create_app():
     app.register_blueprint(class_bp)
 
     @app.route("/api/health")
+    @limiter.exempt
     def health():
         return jsonify({"status": "ok", "platform": "Buxin Academy"})
+
+    @app.route("/api/wake")
+    @limiter.exempt
+    def wake():
+        """SPA calls this on load to wake Render (free tier) and confirm DB with SELECT 1."""
+        try:
+            n = db.session.execute(text("SELECT 1")).scalar()
+            return jsonify({"status": "ok", "db": int(n) if n is not None else None})
+        except Exception as exc:  # noqa: BLE001
+            app.logger.warning("wake: database ping failed: %s", exc)
+            return jsonify({"status": "ok", "db": None}), 200
 
     @socketio.on("connect")
     def on_connect():
