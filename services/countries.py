@@ -100,11 +100,27 @@ COUNTRIES = {
         "rate": 18.5,
         "payment_methods": ["EFT", "SnapScan", "Visa", "Mastercard", "Bank Transfer"],
     },
+    "OTHER": {
+        "name": "Other country",
+        "flag": "🌍",
+        "currency": "USD",
+        "symbol": "$",
+        "rate": 1.0,
+        "payment_methods": [
+            "Bank Transfer",
+            "Visa",
+            "Mastercard",
+            "Western Union / MoneyGram / Ria",
+        ],
+    },
 }
 
 
 def get_country(code: str):
-    return COUNTRIES.get(code.upper())
+    key = (code or "").upper()
+    if key == "OTHER":
+        return COUNTRIES["OTHER"]
+    return COUNTRIES.get(key)
 
 
 def list_countries():

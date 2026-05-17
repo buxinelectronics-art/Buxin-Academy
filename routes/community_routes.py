@@ -1,4 +1,5 @@
 from flask import Blueprint, current_app, g, jsonify, request
+from sqlalchemy.orm import joinedload
 
 from middlewares.auth import active_student_required, admin_required, token_required
 from models import db
@@ -72,7 +73,11 @@ def _parse_post_payload():
 @active_student_required
 def get_posts():
     posts = (
-        CommunityPost.query.order_by(
+        CommunityPost.query.options(
+            joinedload(CommunityPost.likes),
+            joinedload(CommunityPost.comments),
+        )
+        .order_by(
             CommunityPost.is_pinned.desc(),
             CommunityPost.created_at.desc(),
         )

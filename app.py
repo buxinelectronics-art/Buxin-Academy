@@ -110,6 +110,8 @@ def create_app():
             _ensure_payment_columns()
             _ensure_community_columns()
             _ensure_user_subscription_column()
+            _ensure_user_country_name_column()
+            _ensure_academy_settings_table()
             _seed_defaults()
         except Exception as exc:
             app.logger.error("Database init on startup: %s", exc)
@@ -155,6 +157,42 @@ def _ensure_user_subscription_column():
     except Exception as exc:
         db.session.rollback()
         current_app.logger.debug("user subscription column migration: %s", exc)
+
+
+def _ensure_user_country_name_column():
+    """Custom country label when country_code is OTHER (USD pricing)."""
+    from flask import current_app
+
+    if not db.engine.url.drivername.startswith("postgres"):
+        return
+    try:
+        db.session.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS country_name VARCHAR(80)")
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.debug("user country_name column migration: %s", exc)
+
+
+def _ensure_academy_settings_table():
+    """Global class-period start (admin Day 1 control)."""
+    from flask import current_app
+
+    if not db.engine.url.drivername.startswith("postgres"):
+        return
+    try:
+        db.session.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS academy_settings ("
+                "id INTEGER PRIMARY KEY, "
+                "class_period_started_at TIMESTAMP)"
+            )
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.debug("academy_settings migration: %s", exc)
 
 
 def _ensure_community_columns():

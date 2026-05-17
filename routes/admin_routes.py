@@ -81,6 +81,12 @@ def update_student(user_id):
         user.city = str(data.get("city") or "")
     if "country_code" in data and data["country_code"]:
         user.country_code = str(data["country_code"]).upper().strip()
+        if user.country_code == "OTHER":
+            user.country_name = str(data.get("country_name") or user.country_name or "").strip()[:80] or None
+        else:
+            user.country_name = None
+    if "country_name" in data and user.country_code == "OTHER":
+        user.country_name = str(data.get("country_name") or "").strip()[:80] or None
     if "class_type" in data and data["class_type"] in ("group", "individual"):
         user.class_type = data["class_type"]
     if "experience_level" in data:
@@ -198,14 +204,91 @@ def send_announcement():
 @admin_required
 def stats():
     from models.payment import Payment
+    from services.academy_settings_service import get_academy_settings
+    from services.subscription_service import is_subscription_active
+
+    active_paid = User.query.filter_by(role="student", status="active").count()
+    in_period = sum(
+        1
+        for u in User.query.filter_by(role="student", status="active").all()
+        if is_subscription_active(u)
+    )
+    settings = get_academy_settings()
 
     return jsonify({
         "total_students": User.query.filter_by(role="student").count(),
-        "active_students": User.query.filter(
-            User.role == "student",
-            User.status == "active",
-            User.subscription_expires_at > datetime.utcnow(),
-        ).count(),
+        "active_students": active_paid,
+        "students_in_class_period": in_period,
         "pending_payments": Payment.query.filter_by(status="pending").count(),
         "pending_students": User.query.filter_by(role="student", status="pending").count(),
+        **settings.to_dict(),
     })
+
+
+@admin_bp.route("/class-period", methods=["GET"])
+@admin_required
+def class_period_status():
+    from services.academy_settings_service import get_academy_settings
+
+    settings = get_academy_settings()
+    waiting = User.query.filter_by(role="student", status="active").filter(
+        User.subscription_expires_at.is_(None)
+    ).count()
+    return jsonify({**settings.to_dict(), "students_waiting_start": waiting})
+
+
+@admin_bp.route("/class-period/start", methods=["POST"])
+@admin_required
+def class_period_start():
+    from services.subscription_service import start_class_period_for_all_active
+
+    result = start_class_period_for_all_active()
+    if result.get("already_started"):
+        return jsonify(
+            {
+                "error": "Class period already started",
+                "class_period_started_at": result["started_at"].isoformat(),
+            }
+        ), 409
+
+    started_at = result["started_at"]
+    students_started = result["students_started"]
+    db.session.add(
+        AdminAction(
+            admin_id=g.current_user.id,
+            action_type="start_class_period",
+            details=f"Day 1 started for {students_started} students",
+        )
+    )
+    active_students = User.query.filter_by(role="student", status="active").all()
+    for s in active_students:
+        db.session.add(
+            Notification(
+                user_id=s.id,
+                title="Class period started!",
+                message="Day 1 of your 30-day access has begun. Open your dashboard to track progress.",
+            )
+        )
+    db.session.commit()
+
+    from flask import current_app
+
+    for s in active_students:
+        current_app.extensions["socketio"].emit(
+            "notification",
+            {
+                "title": "Class period started!",
+                "message": "Day 1 of 30 has begun.",
+                "status": "active",
+            },
+            room=f"user_{s.id}",
+        )
+
+    return jsonify(
+        {
+            "message": f"Class period started. Day 1 is live for {students_started} students.",
+            "class_period_started": True,
+            "class_period_started_at": started_at.isoformat(),
+            "students_started": students_started,
+        }
+    )

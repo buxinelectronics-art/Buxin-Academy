@@ -10,6 +10,21 @@ from services.subscription_service import is_subscription_active, sync_subscript
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
 
+def _parse_country_fields(data):
+    code = str(data.get("country_code") or "").upper().strip()
+    if not code:
+        return None, None, (jsonify({"error": "country_code is required"}), 400)
+    name = str(data.get("country_name") or "").strip()
+    if code == "OTHER":
+        if len(name) < 2:
+            return None, None, (
+                jsonify({"error": "Please enter your country name"}),
+                400,
+            )
+        return code, name[:80], None
+    return code, None, None
+
+
 @auth_bp.route("/register", methods=["POST"])
 def register():
     data = request.get_json() or {}
@@ -17,6 +32,10 @@ def register():
     for field in required:
         if not data.get(field):
             return jsonify({"error": f"{field} is required"}), 400
+
+    country_code, country_name, country_err = _parse_country_fields(data)
+    if country_err:
+        return country_err
 
     email_norm = data["email"].lower().strip()
     existing = User.query.filter_by(email=email_norm).first()
@@ -35,7 +54,8 @@ def register():
             ), 409
         existing.full_name = data["full_name"].strip()
         existing.phone = data.get("phone", "") or ""
-        existing.country_code = data["country_code"].upper()
+        existing.country_code = country_code
+        existing.country_name = country_name
         existing.city = data.get("city", "") or ""
         existing.class_type = data["class_type"]
         existing.experience_level = data.get("experience_level", "") or ""
@@ -60,7 +80,8 @@ def register():
         email=email_norm,
         full_name=data["full_name"].strip(),
         phone=data.get("phone", ""),
-        country_code=data["country_code"].upper(),
+        country_code=country_code,
+        country_name=country_name,
         city=data.get("city", ""),
         class_type=data["class_type"],
         experience_level=data.get("experience_level", ""),

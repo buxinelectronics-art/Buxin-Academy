@@ -31,12 +31,14 @@ MODEMPAY_COUNTRIES = frozenset({"GM"})
 
 def _activate_student_payment(payment, *, admin_id=None, details=""):
     """Approve payment and unlock student dashboard for one calendar month."""
-    from services.subscription_service import extend_subscription_on_payment
+    from services.academy_settings_service import is_class_period_started
+    from services.subscription_service import activate_student_on_payment
 
     payment.status = "approved"
     payment.reviewed_at = datetime.utcnow()
     user = payment.user
-    extend_subscription_on_payment(user, payment.reviewed_at)
+    activate_student_on_payment(user, payment.reviewed_at)
+    class_started = is_class_period_started()
     Payment.query.filter(
         Payment.user_id == user.id,
         Payment.id != payment.id,
@@ -55,7 +57,12 @@ def _activate_student_payment(payment, *, admin_id=None, details=""):
         Notification(
             user_id=user.id,
             title="Payment Approved!",
-            message="Payment approved! Your 30-day subscription starts now (Day 1). Classes and community are unlocked.",
+            message=(
+                "Payment approved! Your 30-day class period starts now (Day 1). "
+                "Classes and community are unlocked."
+                if class_started
+                else "Payment approved! You are registered. Day 1 of 30 will begin when your instructor starts the class period."
+            ),
         )
     )
     db.session.commit()

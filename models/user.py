@@ -14,6 +14,7 @@ class User(db.Model):
     full_name = db.Column(db.String(120), nullable=False)
     phone = db.Column(db.String(30))
     country_code = db.Column(db.String(5), nullable=False)
+    country_name = db.Column(db.String(80))
     city = db.Column(db.String(80))
     role = db.Column(db.String(20), default="student")  # student | admin
     class_type = db.Column(db.String(20))  # group | individual
@@ -37,7 +38,7 @@ class User(db.Model):
         return check_password_hash(self.password_hash, password)
 
     def to_dict(self, include_sensitive=False):
-        from services.subscription_service import is_subscription_active, subscription_day_info
+        from services.subscription_service import subscription_day_info
 
         data = {
             "id": self.id,
@@ -45,6 +46,7 @@ class User(db.Model):
             "full_name": self.full_name,
             "phone": self.phone,
             "country_code": self.country_code,
+            "country_name": self.country_name,
             "city": self.city,
             "role": self.role,
             "class_type": self.class_type,
@@ -58,7 +60,6 @@ class User(db.Model):
             "subscription_expires_at": (
                 self.subscription_expires_at.isoformat() if self.subscription_expires_at else None
             ),
-            "subscription_active": is_subscription_active(self),
             **subscription_day_info(self),
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
