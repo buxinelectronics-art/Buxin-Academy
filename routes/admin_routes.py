@@ -1,6 +1,7 @@
 from datetime import datetime
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
+from sqlalchemy.orm import joinedload
 
 from middlewares.auth import admin_required
 from models import db
@@ -308,6 +309,33 @@ def class_period_start():
             "students_started": students_started,
         }
     )
+
+
+@admin_bp.route("/community/posts", methods=["GET"])
+@admin_required
+def list_community_posts():
+    """All community posts (same feed as student dashboard)."""
+    posts = (
+        CommunityPost.query.options(
+            joinedload(CommunityPost.author),
+            joinedload(CommunityPost.likes),
+            joinedload(CommunityPost.comments),
+        )
+        .order_by(
+            CommunityPost.is_pinned.desc(),
+            CommunityPost.created_at.desc(),
+        )
+        .limit(200)
+        .all()
+    )
+    uid = g.current_user.id
+    serialized = []
+    for post in posts:
+        try:
+            serialized.append(post.to_dict(uid, include_comments=True))
+        except Exception:
+            current_app.logger.warning("Skip community post id=%s in admin list", post.id)
+    return jsonify({"posts": serialized, "total": len(serialized)})
 
 
 @admin_bp.route("/coupons", methods=["GET"])

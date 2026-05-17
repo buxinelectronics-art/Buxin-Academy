@@ -96,6 +96,7 @@ def _parse_post_payload():
 def get_posts():
     posts = (
         CommunityPost.query.options(
+            joinedload(CommunityPost.author),
             joinedload(CommunityPost.likes),
             joinedload(CommunityPost.comments),
         )
