@@ -64,7 +64,7 @@ def active_student_required(f):
     @wraps(f)
     @token_required
     def decorated(*args, **kwargs):
-        from services.subscription_service import is_subscription_active, sync_subscription_status
+        from services.subscription_service import has_app_access, sync_subscription_status
 
         user = g.current_user
         if user.role == "admin":
@@ -72,7 +72,7 @@ def active_student_required(f):
         sync_subscription_status(user)
         if user.status == "pending":
             return jsonify({"error": "Account not yet approved", "status": user.status}), 403
-        if user.status == "expired" or not is_subscription_active(user):
+        if not has_app_access(user):
             return jsonify(
                 {
                     "error": "Your monthly subscription has ended. Please renew your payment.",
@@ -80,8 +80,6 @@ def active_student_required(f):
                     "subscription_expired": True,
                 }
             ), 403
-        if user.status != "active":
-            return jsonify({"error": "Account not yet approved", "status": user.status}), 403
         return f(*args, **kwargs)
 
     return decorated

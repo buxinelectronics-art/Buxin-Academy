@@ -26,11 +26,31 @@ def is_subscription_active(user) -> bool:
     return user.subscription_expires_at > datetime.utcnow()
 
 
+def has_app_access(user) -> bool:
+    """Paid & approved — full app (community, dashboard) before or during class period."""
+    if not user or user.role == "admin":
+        return True
+    return user.status == "active"
+
+
 def awaiting_class_start(user) -> bool:
     """Paid & active, but admin has not started the global class period yet."""
     if not user or user.role != "student":
         return False
     return user.status == "active" and not is_class_period_started()
+
+
+def needs_renewal(user) -> bool:
+    """Class period has started and 30-day access ended — pay again to unlock."""
+    if not user or user.role == "student":
+        return False
+    if user.status == "expired":
+        return True
+    if not is_class_period_started():
+        return False
+    if user.status == "active" and not is_subscription_active(user):
+        return True
+    return False
 
 
 def backfill_subscription_expiry(user) -> None:
@@ -140,6 +160,8 @@ def subscription_day_info(user) -> dict:
         "class_period_started": is_class_period_started(),
         "awaiting_class_start": awaiting_class_start(user),
         "subscription_active": is_subscription_active(user),
+        "has_app_access": has_app_access(user),
+        "needs_renewal": needs_renewal(user),
     }
     if not user or user.role == "admin":
         return base
