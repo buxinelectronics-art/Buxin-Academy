@@ -296,10 +296,18 @@ def apply_coupon_route():
                 details=f"Free coupon {coupon.code}",
             )
             db.session.commit()
+            period = (
+                "6-month course period"
+                if class_type == "individual"
+                else "30-day class month"
+            )
             return jsonify(
                 {
                     "activated": True,
-                    "message": "Coupon applied! You have full access — no payment needed.",
+                    "message": (
+                        f"Coupon applied for this {period}. When it ends, renew with payment "
+                        "or a new coupon for the next period."
+                    ),
                     **_payment_pricing_payload(payment, activated_user),
                 }
             )
@@ -308,7 +316,10 @@ def apply_coupon_route():
         return jsonify(
             {
                 "activated": False,
-                "message": f"Coupon applied: {coupon.discount_percent}% off.",
+                "message": (
+                    f"Coupon applied: {coupon.discount_percent}% off this period only. "
+                    "When your access ends, pay or use a new coupon to continue."
+                ),
                 **_payment_pricing_payload(payment, user),
             }
         )

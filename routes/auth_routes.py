@@ -63,7 +63,7 @@ def register():
         if existing.status in ("active", "expired"):
             return jsonify(
                 {
-                    "error": "Account already exists. Log in to renew your monthly payment.",
+                    "error": "Account already exists. Log in to renew (payment or a new coupon).",
                 }
             ), 409
         existing.full_name = data["full_name"].strip()

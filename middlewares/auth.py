@@ -75,9 +75,13 @@ def active_student_required(f):
         if not has_app_access(user):
             return jsonify(
                 {
-                    "error": "Your monthly subscription has ended. Please renew your payment.",
+                    "error": (
+                        "Your class access period has ended. Renew with payment "
+                        "or a new coupon to continue."
+                    ),
                     "status": user.status,
                     "subscription_expired": True,
+                    "needs_renewal": True,
                 }
             ), 403
         return f(*args, **kwargs)

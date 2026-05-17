@@ -27,10 +27,14 @@ def is_subscription_active(user) -> bool:
 
 
 def has_app_access(user) -> bool:
-    """Paid & approved — full app (community, dashboard) before or during class period."""
+    """Paid & approved with a current access period (not after Day 1–30 / 6-month end)."""
     if not user or user.role == "admin":
         return True
-    return user.status == "active"
+    if user.status != "active":
+        return False
+    if needs_renewal(user):
+        return False
+    return True
 
 
 def awaiting_class_start(user) -> bool:
