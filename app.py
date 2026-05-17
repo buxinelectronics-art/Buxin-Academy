@@ -208,6 +208,12 @@ def _ensure_community_columns():
                 "youtube_video_id VARCHAR(20)"
             )
         )
+        db.session.execute(
+            text(
+                "ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS "
+                "image_urls TEXT"
+            )
+        )
         db.session.commit()
     except Exception as exc:
         db.session.rollback()

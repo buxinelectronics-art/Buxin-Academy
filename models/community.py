@@ -1,7 +1,30 @@
+import json
 from datetime import datetime
 
 from models import db
 from services.community_media import extract_youtube_id
+
+
+def parse_post_image_urls(post) -> list:
+    if not post:
+        return []
+    if post.image_urls:
+        try:
+            data = json.loads(post.image_urls)
+            if isinstance(data, list):
+                return [u for u in data if u]
+        except (TypeError, json.JSONDecodeError):
+            pass
+    if post.image_url:
+        return [post.image_url]
+    return []
+
+
+def serialize_post_image_urls(urls: list | None) -> str | None:
+    if not urls:
+        return None
+    clean = [u for u in urls if u]
+    return json.dumps(clean) if clean else None
 
 
 class CommunityPost(db.Model):
@@ -11,6 +34,7 @@ class CommunityPost(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     content = db.Column(db.Text, nullable=False)
     image_url = db.Column(db.String(500))
+    image_urls = db.Column(db.Text)
     youtube_video_id = db.Column(db.String(20))
     is_pinned = db.Column(db.Boolean, default=False)
     is_announcement = db.Column(db.Boolean, default=False)
@@ -32,6 +56,7 @@ class CommunityPost(db.Model):
             "author_picture": self.author.profile_picture if self.author else None,
             "content": self.content,
             "image_url": self.image_url,
+            "image_urls": parse_post_image_urls(self),
             "youtube_video_id": self.youtube_video_id or extract_youtube_id(self.content),
             "is_pinned": self.is_pinned,
             "is_announcement": self.is_announcement,

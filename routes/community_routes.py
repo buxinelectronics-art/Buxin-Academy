@@ -3,14 +3,21 @@ from sqlalchemy.orm import joinedload
 
 from middlewares.auth import active_student_required, admin_required, token_required
 from models import db
-from models.community import Comment, CommunityPost, PostLike
+from models.community import (
+    Comment,
+    CommunityPost,
+    PostLike,
+    parse_post_image_urls,
+    serialize_post_image_urls,
+)
 from services.community_media import extract_youtube_id
 
 community_bp = Blueprint("community", __name__, url_prefix="/api/community")
+MAX_POST_IMAGES = 5
 
 
-def _post_has_body(content: str, image_url, youtube_id: str | None) -> bool:
-    if image_url:
+def _post_has_body(content: str, image_urls: list, youtube_id: str | None) -> bool:
+    if image_urls:
         return True
     if youtube_id:
         return True
@@ -30,33 +37,48 @@ def _can_manage_post(post):
     return user.role == "admin" or post.user_id == user.id
 
 
-def _apply_image_upload(data, file=None):
-    image_url = data.get("image_url")
-    if file and file.filename:
-        try:
-            from services.cloudinary_service import upload_image
+def _upload_image_file(file):
+    from services.cloudinary_service import upload_image
 
-            result = upload_image(file, folder="buxinev/community")
-            image_url = result["url"]
+    return upload_image(file, folder="buxinev/community")["url"]
+
+
+def _apply_images_upload(data, files=None, legacy_file=None):
+    urls = []
+    upload_files = []
+    if files:
+        upload_files.extend([f for f in files if f and f.filename])
+    if legacy_file and legacy_file.filename:
+        upload_files.append(legacy_file)
+    upload_files = upload_files[:MAX_POST_IMAGES]
+
+    for file in upload_files:
+        try:
+            urls.append(_upload_image_file(file))
         except Exception as exc:
             current_app.logger.warning("Community file upload failed: %s", exc)
             raise
-    elif data.get("image_base64"):
+
+    if not urls and data.get("image_base64"):
         try:
             from services.cloudinary_service import upload_image
 
-            result = upload_image(data["image_base64"], folder="buxinev/community")
-            image_url = result["url"]
+            urls.append(upload_image(data["image_base64"], folder="buxinev/community")["url"])
         except Exception as exc:
             current_app.logger.warning("Community image upload failed: %s", exc)
             raise
-    return image_url
+
+    if not urls and data.get("image_url"):
+        urls.append(data["image_url"])
+
+    return urls
 
 
 def _parse_post_payload():
     """JSON body or multipart form (preferred for photos on mobile)."""
+    multi = request.files.getlist("images") or []
     file = request.files.get("image")
-    if file and file.filename:
+    if multi or (file and file.filename):
         return {
             "content": (request.form.get("content") or "").strip(),
             "is_pinned": request.form.get("is_pinned") in ("true", "1", "on"),
@@ -64,9 +86,9 @@ def _parse_post_payload():
             "meet_link": request.form.get("meet_link") or None,
             "zoom_link": request.form.get("zoom_link") or None,
             "image_base64": None,
-        }, file
+        }, multi, file
     data = request.get_json(silent=True, force=True) or {}
-    return data, None
+    return data, [], None
 
 
 @community_bp.route("/posts", methods=["GET"])
@@ -92,24 +114,29 @@ def get_posts():
 @active_student_required
 def create_post():
     try:
-        data, upload_file = _parse_post_payload()
+        data, upload_files, legacy_file = _parse_post_payload()
     except Exception:
         return jsonify({"error": "Invalid post data"}), 400
 
     content = (data.get("content") or "").strip()
     try:
-        image_url = _apply_image_upload(data, file=upload_file)
+        image_urls = _apply_images_upload(data, files=upload_files, legacy_file=legacy_file)
     except Exception:
         return jsonify({"error": "Could not upload image. Try a smaller JPG or PNG."}), 400
 
+    if len(image_urls) > MAX_POST_IMAGES:
+        return jsonify({"error": f"You can add up to {MAX_POST_IMAGES} images per post"}), 400
+
     youtube_id = extract_youtube_id(content)
-    if not _post_has_body(content, image_url, youtube_id):
+    if not _post_has_body(content, image_urls, youtube_id):
         return jsonify({"error": "Write a message, paste a YouTube link, or add an image"}), 400
 
+    image_url = image_urls[0] if image_urls else None
     post = CommunityPost(
         user_id=g.current_user.id,
-        content=content or ("📷" if image_url else "🎬"),
+        content=content or ("📷" if image_urls else "🎬"),
         image_url=image_url,
+        image_urls=serialize_post_image_urls(image_urls),
         youtube_video_id=youtube_id,
         is_pinned=bool(data.get("is_pinned")) if g.current_user.role == "admin" else False,
         is_announcement=bool(data.get("is_announcement")) if g.current_user.role == "admin" else False,
@@ -143,7 +170,10 @@ def update_post(post_id):
     if "zoom_link" in data:
         post.zoom_link = data.get("zoom_link")
     if data.get("image_base64"):
-        post.image_url = _apply_image_upload(data) or post.image_url
+        urls = _apply_images_upload(data)
+        if urls:
+            post.image_url = urls[0]
+            post.image_urls = serialize_post_image_urls(urls)
 
     db.session.commit()
     payload = _post_response(post, g.current_user.id)
