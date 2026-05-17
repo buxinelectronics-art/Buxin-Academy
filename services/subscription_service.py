@@ -1,20 +1,20 @@
-"""Monthly subscription access for students (30-day periods)."""
+"""Subscription access: 30-day group classes, 6-month individual courses."""
 from datetime import datetime, timedelta
 
 from models import db
 from models.payment import Payment
 from models.user import User
 from services.academy_settings_service import get_class_period_started_at, is_class_period_started
+from services.individual_courses import subscription_days_for_class_type
 
-SUBSCRIPTION_DAYS = 30
 
-
-def subscription_period_end(from_dt: datetime | None = None) -> datetime:
-    return (from_dt or datetime.utcnow()) + timedelta(days=SUBSCRIPTION_DAYS)
+def subscription_period_end(from_dt: datetime | None = None, user: User | None = None) -> datetime:
+    days = subscription_days_for_class_type(user.class_type if user else None)
+    return (from_dt or datetime.utcnow()) + timedelta(days=days)
 
 
 def is_subscription_active(user) -> bool:
-    """True when the 30-day class period is running for this student."""
+    """True when the class period is running for this student."""
     if not user or user.role == "admin":
         return True
     if user.status != "active":
@@ -41,8 +41,8 @@ def awaiting_class_start(user) -> bool:
 
 
 def needs_renewal(user) -> bool:
-    """Class period has started and 30-day access ended — pay again to unlock."""
-    if not user or user.role == "student":
+    """Class period has started and access ended — pay again to unlock."""
+    if not user or user.role != "student":
         return False
     if user.status == "expired":
         return True
@@ -54,7 +54,7 @@ def needs_renewal(user) -> bool:
 
 
 def backfill_subscription_expiry(user) -> None:
-    """Set 30-day window only after admin has started the class period."""
+    """Set access window only after admin has started the class period."""
     if user.role != "student" or user.subscription_expires_at:
         return
     if not is_class_period_started():
@@ -68,14 +68,14 @@ def backfill_subscription_expiry(user) -> None:
     if latest and latest.reviewed_at:
         anchor = max(latest.reviewed_at, started_at)
         user.subscription_started_at = anchor
-        user.subscription_expires_at = subscription_period_end(anchor)
+        user.subscription_expires_at = subscription_period_end(anchor, user)
     elif user.status == "active":
         user.subscription_started_at = started_at
-        user.subscription_expires_at = subscription_period_end(started_at)
+        user.subscription_expires_at = subscription_period_end(started_at, user)
 
 
 def sync_subscription_status(user, *, commit: bool = True) -> None:
-    """Mark students as expired when their paid month has ended."""
+    """Mark students as expired when their paid period has ended."""
     if user.role != "student":
         return
     if not is_class_period_started():
@@ -90,7 +90,7 @@ def sync_subscription_status(user, *, commit: bool = True) -> None:
 
 
 def activate_student_on_payment(user, approved_at: datetime | None = None) -> None:
-    """Approve payment; start 30-day timer only if class period already started."""
+    """Approve payment; start timer only if class period already started."""
     now = approved_at or datetime.utcnow()
     user.status = "active"
     if is_class_period_started():
@@ -103,14 +103,15 @@ def activate_student_on_payment(user, approved_at: datetime | None = None) -> No
 def extend_subscription_on_payment(
     user, approved_at: datetime | None = None, *, set_status: bool = True
 ) -> datetime:
-    """Start or stack a 30-day access period from approval."""
+    """Start or stack an access period from approval (30 or 180 days by class type)."""
     now = approved_at or datetime.utcnow()
+    days = subscription_days_for_class_type(user.class_type)
     if user.subscription_expires_at and user.subscription_expires_at > now:
         started = user.subscription_expires_at
-        expires = user.subscription_expires_at + timedelta(days=SUBSCRIPTION_DAYS)
+        expires = user.subscription_expires_at + timedelta(days=days)
     else:
         started = now
-        expires = subscription_period_end(now)
+        expires = subscription_period_end(now, user)
     user.subscription_started_at = started
     user.subscription_expires_at = expires
     if set_status:
@@ -140,7 +141,7 @@ def start_class_period_for_all_active() -> dict:
     count = 0
     for user in students:
         user.subscription_started_at = now
-        user.subscription_expires_at = subscription_period_end(now)
+        user.subscription_expires_at = subscription_period_end(now, user)
         count += 1
 
     return {
@@ -151,9 +152,12 @@ def start_class_period_for_all_active() -> dict:
 
 
 def subscription_day_info(user) -> dict:
-    """Day 1–30 progress for dashboard (UTC)."""
+    """Day progress for dashboard (UTC)."""
+    total_days = subscription_days_for_class_type(
+        user.class_type if user and user.role == "student" else None
+    )
     base = {
-        "subscription_days_total": SUBSCRIPTION_DAYS,
+        "subscription_days_total": total_days,
         "subscription_day": None,
         "subscription_days_left": None,
         "subscription_expiring_soon": False,
@@ -176,15 +180,16 @@ def subscription_day_info(user) -> dict:
             "subscription_days_left": 0,
         }
     if not started:
-        started = expires - timedelta(days=SUBSCRIPTION_DAYS)
+        started = expires - timedelta(days=total_days)
     elapsed = max(0, (now - started).days)
-    day = min(SUBSCRIPTION_DAYS, elapsed + 1)
+    day = min(total_days, elapsed + 1)
     days_left = max(0, (expires - now).days)
     if expires > now and days_left == 0:
         days_left = 1
+    warn_window = 14 if user.class_type == "individual" else 7
     return {
         **base,
         "subscription_day": day,
         "subscription_days_left": days_left,
-        "subscription_expiring_soon": 0 < days_left <= 7,
+        "subscription_expiring_soon": 0 < days_left <= warn_window,
     }

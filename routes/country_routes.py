@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 
 from services.countries import get_country, list_countries
 from services.currency_service import get_class_prices
+from services.individual_courses import list_individual_courses
 
 country_bp = Blueprint("country", __name__, url_prefix="/api")
 
@@ -30,3 +31,8 @@ def country_detail(code):
 def prices():
     code = request.args.get("country", "GM")
     return jsonify(get_class_prices(code.upper()))
+
+
+@country_bp.route("/courses/individual", methods=["GET"])
+def individual_courses():
+    return jsonify({"courses": list_individual_courses()})

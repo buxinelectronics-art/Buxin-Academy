@@ -18,6 +18,7 @@ class User(db.Model):
     city = db.Column(db.String(80))
     role = db.Column(db.String(20), default="student")  # student | admin
     class_type = db.Column(db.String(20))  # group | individual
+    selected_course = db.Column(db.String(40))  # individual track id
     experience_level = db.Column(db.String(50))
     learning_goals = db.Column(db.Text)
     profile_picture = db.Column(db.String(500))
@@ -38,6 +39,7 @@ class User(db.Model):
         return check_password_hash(self.password_hash, password)
 
     def to_dict(self, include_sensitive=False):
+        from services.individual_courses import course_name
         from services.subscription_service import subscription_day_info
 
         data = {
@@ -50,6 +52,8 @@ class User(db.Model):
             "city": self.city,
             "role": self.role,
             "class_type": self.class_type,
+            "selected_course": self.selected_course,
+            "selected_course_name": course_name(self.selected_course),
             "experience_level": self.experience_level,
             "learning_goals": self.learning_goals,
             "profile_picture": self.profile_picture,

@@ -11,6 +11,7 @@ from models.notification import Notification
 from models.payment import Payment
 from models.schedule import StudentSchedule
 from models.user import User
+from services.individual_courses import is_valid_course_id
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
@@ -34,6 +35,7 @@ def list_students():
     status = request.args.get("status")
     country = request.args.get("country")
     class_type = request.args.get("class_type")
+    selected_course = request.args.get("selected_course")
     search = request.args.get("search", "").strip()
     query = User.query.filter_by(role="student")
     if status:
@@ -42,6 +44,8 @@ def list_students():
         query = query.filter(User.country_code == country.upper())
     if class_type:
         query = query.filter(User.class_type == class_type)
+    if selected_course:
+        query = query.filter(User.selected_course == selected_course)
     if search:
         query = query.filter(
             db.or_(
@@ -89,6 +93,16 @@ def update_student(user_id):
         user.country_name = str(data.get("country_name") or "").strip()[:80] or None
     if "class_type" in data and data["class_type"] in ("group", "individual"):
         user.class_type = data["class_type"]
+        if user.class_type == "group":
+            user.selected_course = None
+    if "selected_course" in data:
+        if user.class_type != "individual":
+            user.selected_course = None
+        else:
+            course_id = str(data.get("selected_course") or "").strip()
+            if course_id and not is_valid_course_id(course_id):
+                return jsonify({"error": "Invalid course track"}), 400
+            user.selected_course = course_id or None
     if "experience_level" in data:
         user.experience_level = str(data.get("experience_level") or "")
     if "learning_goals" in data:

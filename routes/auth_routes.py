@@ -5,6 +5,7 @@ from models import db
 from models.notification import Notification
 from models.user import User
 from services.cloudinary_service import upload_image
+from services.individual_courses import is_valid_course_id
 from services.subscription_service import is_subscription_active, sync_subscription_status
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -25,6 +26,15 @@ def _parse_country_fields(data):
     return code, None, None
 
 
+def _parse_selected_course(data, class_type: str):
+    if class_type != "individual":
+        return None, None
+    course_id = str(data.get("selected_course") or "").strip()
+    if not is_valid_course_id(course_id):
+        return None, (jsonify({"error": "Please select your 6-month course track"}), 400)
+    return course_id, None
+
+
 @auth_bp.route("/register", methods=["POST"])
 def register():
     data = request.get_json() or {}
@@ -36,6 +46,10 @@ def register():
     country_code, country_name, country_err = _parse_country_fields(data)
     if country_err:
         return country_err
+
+    selected_course, course_err = _parse_selected_course(data, data["class_type"])
+    if course_err:
+        return course_err
 
     email_norm = data["email"].lower().strip()
     existing = User.query.filter_by(email=email_norm).first()
@@ -58,6 +72,10 @@ def register():
         existing.country_name = country_name
         existing.city = data.get("city", "") or ""
         existing.class_type = data["class_type"]
+        if data["class_type"] == "individual":
+            existing.selected_course = selected_course
+        else:
+            existing.selected_course = None
         existing.experience_level = data.get("experience_level", "") or ""
         existing.learning_goals = data.get("learning_goals", "") or ""
         existing.status = "pending"
@@ -84,6 +102,7 @@ def register():
         country_name=country_name,
         city=data.get("city", ""),
         class_type=data["class_type"],
+        selected_course=selected_course,
         experience_level=data.get("experience_level", ""),
         learning_goals=data.get("learning_goals", ""),
         status="pending",
@@ -127,6 +146,28 @@ def me():
     user = g.current_user
     if user.role == "student":
         sync_subscription_status(user)
+    return jsonify({"user": user.to_dict()})
+
+
+@auth_bp.route("/me", methods=["PATCH"])
+@token_required
+def update_me():
+    data = request.get_json() or {}
+    user = g.current_user
+    if user.role != "student":
+        return jsonify({"error": "Forbidden"}), 403
+
+    if "selected_course" in data:
+        if user.class_type != "individual":
+            return jsonify({"error": "Course selection is for individual students only"}), 400
+        course_id, course_err = _parse_selected_course(
+            {"selected_course": data.get("selected_course")}, "individual"
+        )
+        if course_err:
+            return course_err
+        user.selected_course = course_id
+
+    db.session.commit()
     return jsonify({"user": user.to_dict()})
 
 
