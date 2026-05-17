@@ -18,15 +18,29 @@ class Payment(db.Model):
     modem_intent_id = db.Column(db.String(120))
     status = db.Column(db.String(20), default="pending")  # pending | approved | rejected
     class_type = db.Column(db.String(20))
+    coupon_id = db.Column(db.Integer, db.ForeignKey("coupons.id"))
+    discount_percent = db.Column(db.Integer)
+    original_amount_usd = db.Column(db.Float)
+    original_amount_local = db.Column(db.Float)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     reviewed_at = db.Column(db.DateTime)
 
+    coupon = db.relationship("Coupon", foreign_keys=[coupon_id])
+
     def to_dict(self):
+        coupon_code = None
+        if self.coupon_id and self.coupon:
+            coupon_code = self.coupon.code
         return {
             "id": self.id,
             "user_id": self.user_id,
             "amount_usd": self.amount_usd,
             "amount_local": self.amount_local,
+            "original_amount_usd": self.original_amount_usd,
+            "original_amount_local": self.original_amount_local,
+            "discount_percent": self.discount_percent,
+            "coupon_id": self.coupon_id,
+            "coupon_code": coupon_code,
             "currency": self.currency,
             "payment_method": self.payment_method,
             "receipt_url": self.receipt_url,

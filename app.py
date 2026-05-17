@@ -112,6 +112,7 @@ def create_app():
             _ensure_user_subscription_column()
             _ensure_user_country_name_column()
             _ensure_user_selected_course_column()
+            _ensure_coupon_columns()
             _ensure_academy_settings_table()
             _seed_defaults()
         except Exception as exc:
@@ -130,6 +131,10 @@ def _ensure_payment_columns():
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_channel VARCHAR(20) DEFAULT 'manual'",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS modem_transaction_id VARCHAR(120)",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS modem_intent_id VARCHAR(120)",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS coupon_id INTEGER",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS discount_percent INTEGER",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS original_amount_usd DOUBLE PRECISION",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS original_amount_local DOUBLE PRECISION",
     ]
     for sql in stmts:
         try:
@@ -193,6 +198,34 @@ def _ensure_user_selected_course_column():
     except Exception as exc:
         db.session.rollback()
         current_app.logger.debug("user selected_course column migration: %s", exc)
+
+
+def _ensure_coupon_columns():
+    """Coupons table + payment discount fields on PostgreSQL."""
+    from flask import current_app
+
+    if not db.engine.url.drivername.startswith("postgres"):
+        return
+    try:
+        db.session.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS coupons ("
+                "id SERIAL PRIMARY KEY, "
+                "code VARCHAR(32) UNIQUE NOT NULL, "
+                "class_type VARCHAR(20) NOT NULL, "
+                "discount_percent INTEGER NOT NULL, "
+                "used_by_user_id INTEGER REFERENCES users(id), "
+                "used_at TIMESTAMP, "
+                "payment_id INTEGER, "
+                "created_by_admin_id INTEGER REFERENCES users(id), "
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                "notes VARCHAR(200))"
+            )
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.debug("coupons table migration: %s", exc)
 
 
 def _ensure_academy_settings_table():

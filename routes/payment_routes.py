@@ -6,9 +6,16 @@ from middlewares.auth import admin_required, token_required
 from models import db
 from models.admin_action import AdminAction
 from models.notification import Notification
+from models.coupon import Coupon
 from models.payment import Payment
 from models.user import User
 from services.cloudinary_service import PLACEHOLDER_RECEIPT, upload_image
+from services.coupon_service import (
+    CouponError,
+    apply_coupon_to_payment,
+    mark_coupon_used,
+    validate_coupon_for_user,
+)
 from services.currency_service import get_class_prices
 from services.modempay_service import (
     ModemPayError,
@@ -29,8 +36,16 @@ MODEMPAY_INSTANT_METHODS = frozenset({
 MODEMPAY_COUNTRIES = frozenset({"GM"})
 
 
+def _finalize_coupon_on_approval(payment: Payment) -> None:
+    if not payment.coupon_id:
+        return
+    coupon = db.session.get(Coupon, payment.coupon_id)
+    if coupon and not coupon.is_used:
+        mark_coupon_used(coupon, payment.user_id, payment.id)
+
+
 def _activate_student_payment(payment, *, admin_id=None, details=""):
-    """Approve payment and unlock student dashboard for one calendar month."""
+    """Approve payment and unlock student dashboard."""
     from services.academy_settings_service import is_class_period_started
     from services.subscription_service import activate_student_on_payment
 
@@ -38,6 +53,7 @@ def _activate_student_payment(payment, *, admin_id=None, details=""):
     payment.reviewed_at = datetime.utcnow()
     user = payment.user
     activate_student_on_payment(user, payment.reviewed_at)
+    _finalize_coupon_on_approval(payment)
     class_started = is_class_period_started()
     Payment.query.filter(
         Payment.user_id == user.id,
@@ -53,15 +69,23 @@ def _activate_student_payment(payment, *, admin_id=None, details=""):
                 details=details or f"Payment #{payment.id} approved",
             )
         )
+    coupon_note = ""
+    if payment.coupon_id and payment.discount_percent:
+        if payment.discount_percent >= 100:
+            coupon_note = " Your free-access coupon has been applied."
+        else:
+            coupon_note = f" Your {payment.discount_percent}% coupon has been applied."
     db.session.add(
         Notification(
             user_id=user.id,
             title="Payment Approved!",
             message=(
-                "Payment approved! Your 30-day class period starts now (Day 1). "
+                "Payment approved! Your class period starts now (Day 1). "
                 "Classes and community are unlocked."
+                + coupon_note
                 if class_started
-                else "Payment approved! You are registered. Day 1 of 30 will begin when your instructor starts the class period."
+                else "Payment approved! You are registered. Day 1 will begin when your instructor starts the class period."
+                + coupon_note
             ),
         )
     )
@@ -183,6 +207,8 @@ def _get_or_create_pending_payment(user, class_type, method):
         user_id=user.id,
         amount_usd=price["usd"],
         amount_local=price["local"],
+        original_amount_usd=price["usd"],
+        original_amount_local=price["local"],
         currency=price["currency"],
         payment_method=method,
         class_type=class_type,
@@ -191,6 +217,105 @@ def _get_or_create_pending_payment(user, class_type, method):
     db.session.add(payment)
     db.session.flush()
     return payment
+
+
+def _payment_pricing_payload(payment: Payment, user: User) -> dict:
+    return {
+        "payment": payment.to_dict(),
+        "user": user.to_dict(),
+        "original_amount_local": payment.original_amount_local or payment.amount_local,
+        "original_amount_usd": payment.original_amount_usd or payment.amount_usd,
+        "discount_percent": payment.discount_percent,
+        "is_free": (payment.amount_local or 0) <= 0.01,
+    }
+
+
+@payment_bp.route("/validate-coupon", methods=["POST"])
+@token_required
+def validate_coupon():
+    """Check a coupon without applying it."""
+    data = request.get_json() or {}
+    user = g.current_user
+    class_type = data.get("class_type") or user.class_type or "group"
+    code = data.get("code") or data.get("coupon_code") or ""
+    try:
+        coupon = validate_coupon_for_user(code, class_type, user.id)
+    except CouponError as exc:
+        return jsonify({"valid": False, "error": exc.message}), exc.status
+
+    prices = get_class_prices(user.country_code)
+    price = prices["group"] if class_type == "group" else prices["individual"]
+    from services.coupon_service import discounted_amounts
+
+    final_usd, final_local = discounted_amounts(
+        price["usd"], price["local"], coupon.discount_percent
+    )
+    return jsonify(
+        {
+            "valid": True,
+            "code": coupon.code,
+            "class_type": coupon.class_type,
+            "discount_percent": coupon.discount_percent,
+            "is_full": coupon.discount_percent >= 100,
+            "original_amount_local": price["local"],
+            "original_amount_usd": price["usd"],
+            "final_amount_local": final_local,
+            "final_amount_usd": final_usd,
+            "currency": price["currency"],
+        }
+    )
+
+
+@payment_bp.route("/apply-coupon", methods=["POST"])
+@token_required
+def apply_coupon_route():
+    """Apply coupon to checkout; 100% coupons activate the student immediately."""
+    data = request.get_json() or {}
+    user = g.current_user
+    class_type = data.get("class_type") or user.class_type or "group"
+    code = data.get("code") or data.get("coupon_code") or ""
+
+    try:
+        coupon = validate_coupon_for_user(code, class_type, user.id)
+    except CouponError as exc:
+        return jsonify({"error": exc.message}), exc.status
+
+    if user.class_type != class_type:
+        user.class_type = class_type
+
+    try:
+        payment = _get_or_create_pending_payment(user, class_type, "Coupon")
+        apply_coupon_to_payment(payment, coupon)
+        db.session.flush()
+
+        if (payment.amount_local or 0) <= 0.01 or coupon.discount_percent >= 100:
+            payment.payment_method = "Coupon (100% off)"
+            payment.receipt_url = payment.receipt_url or "coupon:free"
+            activated_user = _activate_student_payment(
+                payment,
+                details=f"Free coupon {coupon.code}",
+            )
+            db.session.commit()
+            return jsonify(
+                {
+                    "activated": True,
+                    "message": "Coupon applied! You have full access — no payment needed.",
+                    **_payment_pricing_payload(payment, activated_user),
+                }
+            )
+
+        db.session.commit()
+        return jsonify(
+            {
+                "activated": False,
+                "message": f"Coupon applied: {coupon.discount_percent}% off.",
+                **_payment_pricing_payload(payment, user),
+            }
+        )
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("apply_coupon failed")
+        return jsonify({"error": str(exc)}), 500
 
 
 @payment_bp.route("/submit", methods=["POST"])
@@ -211,17 +336,37 @@ def submit_payment():
     method = data.get("payment_method") or request.form.get("payment_method") or ""
     receipt_base64 = data.get("receipt_base64") or data.get("receipt") or ""
 
-    if not method:
-        return jsonify({"error": "Select a payment method"}), 400
-    has_file = file and file.filename
-    if not _valid_receipt_b64(receipt_base64) and not has_file:
-        return jsonify({"error": "Payment receipt image is required"}), 400
-
     if user.class_type != class_type:
         user.class_type = class_type
 
     try:
         payment = _get_or_create_pending_payment(user, class_type, method)
+        if (payment.amount_local or 0) <= 0.01:
+            payment.payment_method = method or "Coupon"
+            activated_user = _activate_student_payment(
+                payment,
+                details="Zero-balance checkout",
+            )
+            if payment.coupon_id:
+                coupon = db.session.get(Coupon, payment.coupon_id)
+                if coupon and not coupon.is_used:
+                    mark_coupon_used(coupon, user.id, payment.id)
+            db.session.commit()
+            return jsonify(
+                {
+                    "payment": payment.to_dict(),
+                    "user": activated_user.to_dict(),
+                    "activated": True,
+                    "message": "Your account is now active.",
+                }
+            ), 201
+
+        if not method:
+            return jsonify({"error": "Select a payment method"}), 400
+        has_file = file and file.filename
+        if not _valid_receipt_b64(receipt_base64) and not has_file:
+            return jsonify({"error": "Payment receipt image is required"}), 400
+
         ok, upload_note = _save_receipt(payment, file=file, receipt_base64=receipt_base64)
         if not ok:
             db.session.rollback()
@@ -332,11 +477,15 @@ def modempay_session():
     if user.class_type != class_type:
         user.class_type = class_type
 
-    prices = get_class_prices(user.country_code)
-    price = prices["group"] if class_type == "group" else prices["individual"]
-    amount_gmd = int(round(price["local"]))
-
     payment = _get_or_create_pending_payment(user, class_type, method)
+    if (payment.amount_local or 0) <= 0.01:
+        return jsonify(
+            {"error": "Nothing to pay — apply a full coupon or complete checkout first."}
+        ), 400
+
+    amount_gmd = int(round(payment.amount_local))
+    price = {"currency": payment.currency or "GMD", "local": payment.amount_local}
+
     payment.payment_channel = "modempay"
     db.session.flush()
 
@@ -539,6 +688,14 @@ def reject_payment(payment_id):
         return jsonify({"error": "Payment not found"}), 404
     payment.status = "rejected"
     payment.reviewed_at = datetime.utcnow()
+    if payment.coupon_id:
+        coupon = db.session.get(Coupon, payment.coupon_id)
+        if coupon and not coupon.is_used:
+            if payment.original_amount_local is not None:
+                payment.amount_local = payment.original_amount_local
+                payment.amount_usd = payment.original_amount_usd or payment.amount_usd
+            payment.coupon_id = None
+            payment.discount_percent = None
     reason = data.get("reason", "Payment could not be verified.")
     db.session.add(
         AdminAction(

@@ -10,7 +10,9 @@ from models.community import Comment, CommunityPost, PostLike
 from models.notification import Notification
 from models.payment import Payment
 from models.schedule import StudentSchedule
+from models.coupon import Coupon
 from models.user import User
+from services.coupon_service import CouponError, create_coupon
 from services.individual_courses import is_valid_course_id
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
@@ -306,3 +308,45 @@ def class_period_start():
             "students_started": students_started,
         }
     )
+
+
+@admin_bp.route("/coupons", methods=["GET"])
+@admin_required
+def list_coupons():
+    status = request.args.get("status")
+    class_type = request.args.get("class_type")
+    query = Coupon.query
+    if class_type in ("group", "individual"):
+        query = query.filter(Coupon.class_type == class_type)
+    if status == "used":
+        query = query.filter(Coupon.used_at.isnot(None))
+    elif status == "available":
+        query = query.filter(Coupon.used_at.is_(None))
+    coupons = query.order_by(Coupon.created_at.desc()).all()
+    return jsonify({"coupons": [c.to_dict() for c in coupons]})
+
+
+@admin_bp.route("/coupons", methods=["POST"])
+@admin_required
+def create_coupon_route():
+    data = request.get_json() or {}
+    class_type = data.get("class_type", "group")
+    discount_percent = data.get("discount_percent", 100)
+    if data.get("is_full") or data.get("discount_type") == "full":
+        discount_percent = 100
+    try:
+        coupon = create_coupon(
+            class_type=class_type,
+            discount_percent=discount_percent,
+            code=data.get("code"),
+            admin_id=g.current_user.id,
+            notes=data.get("notes", ""),
+        )
+        db.session.commit()
+        return jsonify({"coupon": coupon.to_dict()}), 201
+    except CouponError as exc:
+        db.session.rollback()
+        return jsonify({"error": exc.message}), exc.status
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"error": str(exc)}), 500
