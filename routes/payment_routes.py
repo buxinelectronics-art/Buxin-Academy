@@ -24,6 +24,13 @@ from services.modempay_service import (
     parse_webhook_event,
     retrieve_transaction,
 )
+from services.paypal_service import (
+    PayPalError,
+    capture_order,
+    create_order as paypal_create_order,
+    extract_capture_amount_usd,
+    is_configured as paypal_is_configured,
+)
 
 payment_bp = Blueprint("payments", __name__, url_prefix="/api/payments")
 
@@ -165,6 +172,50 @@ def _complete_modempay_payment(payment: Payment, transaction_id: str, txn: dict)
     return _activate_student_payment(
         payment,
         details=f"Modem Pay auto-approved ({transaction_id})",
+    )
+
+
+def _get_or_reuse_pending_payment(user, class_type, method):
+    """Reuse an open pending checkout (keeps coupon discounts) or create a new row."""
+    existing = (
+        Payment.query.filter_by(user_id=user.id, status="pending", class_type=class_type)
+        .filter(Payment.receipt_url.is_(None))
+        .order_by(Payment.created_at.desc())
+        .first()
+    )
+    if existing:
+        existing.payment_method = method
+        db.session.flush()
+        return existing
+    return _get_or_create_pending_payment(user, class_type, method)
+
+
+def _paypal_amount_matches(payment: Payment, paid_usd) -> bool:
+    try:
+        paid = float(paid_usd)
+        expected = float(payment.amount_usd)
+        return abs(paid - expected) <= max(0.05, expected * 0.03)
+    except (TypeError, ValueError):
+        return False
+
+
+def _complete_paypal_payment(payment: Payment, order_id: str, capture_payload: dict):
+    if payment.status == "approved":
+        return payment.user
+    status = (capture_payload.get("status") or "").upper()
+    if status != "COMPLETED":
+        raise PayPalError("PayPal payment not completed yet")
+    paid_usd = extract_capture_amount_usd(capture_payload)
+    if paid_usd is None or not _paypal_amount_matches(payment, paid_usd):
+        raise PayPalError("PayPal amount does not match")
+    payment.paypal_order_id = order_id
+    payment.modem_transaction_id = payment.modem_transaction_id or order_id
+    payment.payment_channel = "paypal"
+    payment.payment_method = "PayPal"
+    payment.receipt_url = payment.receipt_url or f"paypal://{order_id}"
+    return _activate_student_payment(
+        payment,
+        details=f"PayPal auto-approved ({order_id})",
     )
 
 
@@ -637,6 +688,107 @@ def modempay_webhook():
         current_app.logger.warning("Modem Pay webhook: %s", exc)
 
     return jsonify({"received": True}), 200
+
+
+@payment_bp.route("/paypal/config", methods=["GET"])
+def paypal_config():
+    """Public PayPal client id (for JS SDK)."""
+    enabled = paypal_is_configured()
+    return jsonify(
+        {
+            "enabled": enabled,
+            "client_id": current_app.config.get("PAYPAL_CLIENT_ID", "") if enabled else "",
+            "currency": "USD",
+        }
+    )
+
+
+@payment_bp.route("/paypal/create-order", methods=["POST"])
+@token_required
+def paypal_create_order_route():
+    """Create PayPal order for instant checkout (USD)."""
+    if not paypal_is_configured():
+        return jsonify({"error": "PayPal is not configured on the server"}), 503
+
+    user = g.current_user
+    data = request.get_json() or {}
+    class_type = data.get("class_type") or user.class_type or "group"
+    if user.class_type != class_type:
+        user.class_type = class_type
+
+    payment = _get_or_reuse_pending_payment(user, class_type, "PayPal")
+    if (payment.amount_usd or 0) <= 0.01:
+        return jsonify(
+            {"error": "Nothing to pay — apply a full coupon or use another method."}
+        ), 400
+
+    payment.payment_channel = "paypal"
+    db.session.flush()
+
+    reference = f"academy-{payment.id}"
+    try:
+        order = paypal_create_order(payment.amount_usd, reference)
+    except PayPalError as exc:
+        db.session.rollback()
+        return jsonify({"error": str(exc)}), 502
+
+    payment.paypal_order_id = order["order_id"]
+    db.session.commit()
+
+    return jsonify(
+        {
+            "payment_id": payment.id,
+            "order_id": order["order_id"],
+            "amount_usd": payment.amount_usd,
+            "currency": "USD",
+            "class_type": class_type,
+        }
+    )
+
+
+@payment_bp.route("/paypal/capture", methods=["POST"])
+@token_required
+def paypal_capture_route():
+    """Capture approved PayPal order and unlock student immediately."""
+    if not paypal_is_configured():
+        return jsonify({"error": "PayPal is not configured"}), 503
+
+    data = request.get_json() or {}
+    payment_id = data.get("payment_id")
+    order_id = data.get("order_id")
+    if not payment_id or not order_id:
+        return jsonify({"error": "payment_id and order_id are required"}), 400
+
+    payment = db.session.get(Payment, int(payment_id))
+    if not payment or payment.user_id != g.current_user.id:
+        return jsonify({"error": "Payment not found"}), 404
+
+    if payment.status == "approved":
+        return jsonify(
+            {
+                "payment": payment.to_dict(),
+                "user": payment.user.to_dict(),
+                "message": "Payment already approved.",
+            }
+        )
+
+    if payment.paypal_order_id and payment.paypal_order_id != order_id:
+        return jsonify({"error": "PayPal order mismatch"}), 400
+
+    try:
+        capture_payload = capture_order(str(order_id))
+        user = _complete_paypal_payment(payment, str(order_id), capture_payload)
+        db.session.commit()
+        return jsonify(
+            {
+                "payment": payment.to_dict(),
+                "user": user.to_dict(),
+                "message": "Payment successful! Your account is now active.",
+            }
+        )
+    except PayPalError as exc:
+        db.session.rollback()
+        return jsonify({"error": str(exc)}), 400
 
 
 @payment_bp.route("/my", methods=["GET"])
