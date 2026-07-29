@@ -114,6 +114,7 @@ def create_app():
             _ensure_user_selected_course_column()
             _ensure_coupon_columns()
             _ensure_academy_settings_table()
+            _ensure_academy_settings_columns()
             _seed_defaults()
         except Exception as exc:
             app.logger.error("Database init on startup: %s", exc)
@@ -135,6 +136,7 @@ def _ensure_payment_columns():
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS discount_percent INTEGER",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS original_amount_usd DOUBLE PRECISION",
         "ALTER TABLE payments ADD COLUMN IF NOT EXISTS original_amount_local DOUBLE PRECISION",
+        "ALTER TABLE payments ADD COLUMN IF NOT EXISTS paypal_order_id VARCHAR(120)",
     ]
     for sql in stmts:
         try:
@@ -226,6 +228,26 @@ def _ensure_coupon_columns():
     except Exception as exc:
         db.session.rollback()
         current_app.logger.debug("coupons table migration: %s", exc)
+
+
+def _ensure_academy_settings_columns():
+    """Welcome slides + individual class visibility on home page."""
+    from flask import current_app
+
+    if not db.engine.url.drivername.startswith("postgres"):
+        return
+    try:
+        for col in (
+            "individual_class_visible BOOLEAN DEFAULT FALSE",
+            "welcome_slide_urls TEXT DEFAULT '[]'",
+        ):
+            db.session.execute(
+                text(f"ALTER TABLE academy_settings ADD COLUMN IF NOT EXISTS {col}")
+            )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.debug("academy_settings columns migration: %s", exc)
 
 
 def _ensure_academy_settings_table():
