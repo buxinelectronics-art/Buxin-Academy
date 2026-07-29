@@ -13,9 +13,10 @@ class Payment(db.Model):
     currency = db.Column(db.String(10))
     payment_method = db.Column(db.String(50))
     receipt_url = db.Column(db.String(500))
-    payment_channel = db.Column(db.String(20), default="manual")  # manual | modempay
+    payment_channel = db.Column(db.String(20), default="manual")  # manual | modempay | paypal
     modem_transaction_id = db.Column(db.String(120))
     modem_intent_id = db.Column(db.String(120))
+    paypal_order_id = db.Column(db.String(120))
     status = db.Column(db.String(20), default="pending")  # pending | approved | rejected
     class_type = db.Column(db.String(20))
     coupon_id = db.Column(db.Integer, db.ForeignKey("coupons.id"))
