@@ -65,5 +65,9 @@ class Config:
         "https://buxin-academy.onrender.com",
     ).rstrip("/")
 
-    BASE_GROUP_PRICE_USD = 5.0
+    BASE_GROUP_PRICE_USD = 1.0
     BASE_INDIVIDUAL_PRICE_USD = 100.0
+
+    PAYPAL_CLIENT_ID = os.getenv("PAYPAL_CLIENT_ID", "")
+    PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET", "")
+    PAYPAL_MODE = os.getenv("PAYPAL_MODE", "sandbox")
